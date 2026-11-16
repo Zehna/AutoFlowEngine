@@ -4,25 +4,33 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.taras.autoflow.util.ShizukuHelper
-import com.taras.autoflow.util.SystemPermissionHelper
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import com.taras.autoflow.engine.HealthCheckItem
+import com.taras.autoflow.service.PlatformAutomation
 
 @Composable
 fun SystemHealthCard() {
     val context = LocalContext.current
-    val isA11y = SystemPermissionHelper.isAccessibilityEnabled(context)
-    val isNotif = SystemPermissionHelper.isNotificationListenerEnabled(context)
-    val isBattery = SystemPermissionHelper.isBatteryOptimizationIgnored(context)
-    val isShizuku = ShizukuHelper.hasPermission()
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        refreshTick++
+    }
+
+    val items = remember(refreshTick) {
+        PlatformAutomation.getHealthItems(context)
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -30,45 +38,51 @@ fun SystemHealthCard() {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Status Kesehatan Sistem", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Status Kesehatan Sistem",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = { refreshTick++ }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Periksa Ulang", modifier = Modifier.size(18.dp))
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
 
-            PermissionStatusRow("Accessibility Service", isA11y) {
-                SystemPermissionHelper.openAccessibilitySettings(context)
-            }
-            PermissionStatusRow("Notification Listener", isNotif) {
-                SystemPermissionHelper.openNotificationListenerSettings(context)
-            }
-            PermissionStatusRow("Abaikan Optimasi Baterai", isBattery) {
-                SystemPermissionHelper.requestIgnoreBatteryOptimizations(context)
-            }
-            PermissionStatusRow("Shizuku System Shell", isShizuku) {
-                ShizukuHelper.requestPermission(101)
+            items.forEach { item ->
+                PermissionStatusRow(item)
             }
         }
     }
 }
 
 @Composable
-private fun PermissionStatusRow(title: String, isGranted: Boolean, onClick: () -> Unit) {
+private fun PermissionStatusRow(item: HealthCheckItem) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Icon(
-                imageVector = if (isGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                imageVector = if (item.isGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
                 contentDescription = null,
-                tint = if (isGranted) Color(0xFF2E7D32) else Color(0xFFE65100),
+                tint = if (item.isGranted) Color(0xFF2E7D32) else Color(0xFFE65100),
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(item.title, style = MaterialTheme.typography.bodyMedium)
         }
-        if (!isGranted) {
-            TextButton(onClick = onClick) {
-                Text("Aktifkan")
+        if (!item.isGranted) {
+            TextButton(onClick = item.onAction) {
+                Text(item.actionLabel)
             }
         }
     }

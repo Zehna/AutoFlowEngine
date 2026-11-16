@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Compile APK & Create Release
+    name: Compile Release APKs & Create Release
     runs-on: ubuntu-latest
 
     steps:
@@ -29,39 +29,67 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Generate Release Signing Keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore "${{ github.workspace }}/release.keystore" \
+            -storetype PKCS12 \
+            -alias autoflow \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass autoflow_release_pass \
+            -keypass autoflow_release_pass \
+            -dname "CN=AutoFlow Engine, OU=Mobile, O=Zehna, L=Jakarta, C=ID"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Standard & Full Release APKs
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          RELEASE_STORE_PASSWORD: autoflow_release_pass
+          RELEASE_KEY_ALIAS: autoflow
+          RELEASE_KEY_PASSWORD: autoflow_release_pass
+        run: ./gradlew assembleStandardRelease assembleFullRelease --stacktrace
 
-      - name: Upload Build Artifact
+      - name: Prepare & Inspect Release APKs
+        run: |
+          mkdir -p release_apks
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v1.1.0.apk
+          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v1.1.0.apk
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
+          echo "=== Permissions in Standard APK ==="
+          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v1.1.0.apk
+          echo "=== Manifest check in Standard APK ==="
+          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v1.1.0.apk --file AndroidManifest.xml | grep -iE "accessibility|notification|alert_window|query_all|debuggable" || echo "Clean: no high-risk Play Protect flags!"
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AutoFlowEngine-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: AutoFlowEngine-v1.1.0-APKs
+          path: release_apks/*.apk
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release v1.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.0.0 --yes || true
-          git tag -f v1.0.0
-          git push -f origin v1.0.0 || true
-          gh release create v1.0.0 app/build/outputs/apk/debug/app-debug.apk \
-            --title "AutoFlow Engine v1.0.0" \
-            --notes "### AutoFlow Engine v1.0.0 APK
+          gh release delete v1.1.0 --yes || true
+          git tag -f v1.1.0
+          git push -f origin v1.1.0 || true
+          gh release create v1.1.0 \
+            release_apks/AutoFlowEngine-Standard-v1.1.0.apk \
+            release_apks/AutoFlowEngine-FullA11y-v1.1.0.apk \
+            --title "AutoFlow Engine v1.1.0 (Play Protect Compatible)" \
+            --notes "### AutoFlow Engine v1.1.0
 
-          Otomatisasi Android tingkat lanjut berbasis:
-          - Chaquopy (CPython 3.11 Runtime)
-          - Room Database (Output Vault & Deduplikasi)
-          - Accessibility Service (Humanized Bezier Motion & Emergency Stop)
-          - Jetpack Compose Material 3
+          Tersedia dua varian APK Release-signed:
 
-          #### Cara Install di HP Android:
-          1. Unduh file **app-debug.apk** di bawah ini.
-          2. Buka dan instal pada perangkat Android.
-          3. Jika sakelar Accessibility atau Notification Listener abu-abu (Restricted Settings di Android 13+):
-             - Masuk ke **Settings -> Apps -> AutoFlow Engine**
-             - Klik menu titik 3 di kanan atas -> **Allow restricted settings**
-             - Buka aplikasi dan aktifkan izin."
+          1. **AutoFlowEngine-Standard-v1.1.0.apk** *(Direkomendasikan)*
+             - Bebas izin sensitif yang memicu blokir Google Play Protect (*AccessibilityService* & *NotificationListener* dipisahkan).
+             - Dapat diinstal langsung di HP Android Indonesia.
+             - Mendukung penuh CPython 3.11 (Chaquopy), Room Database Output Vault, OkHttp, Offscreen WebView, Gemini AI, Foreground Service (dengan tombol STOP di notifikasi), dan UI Automation via **Shizuku**.
+
+          2. **AutoFlowEngine-FullA11y-v1.1.0.apk**
+             - Varian lengkap dengan *AccessibilityService* (gestur Bezier & Emergency Stop Volume Down 2x), *NotificationListener*, dan *Floating Overlay*.
+             - Catatan: Di Android Indonesia, instalasi sideload varian ini membutuhkan instalasi via Shizuku/ADB atau menonaktifkan sementara Play Protect."
