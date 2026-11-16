@@ -14,9 +14,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.taras.autoflow.engine.WorkflowDefinition
-import com.taras.autoflow.engine.WorkflowNode
+import com.taras.autoflow.engine.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 
 private val editorJson = Json {
     prettyPrint = true
@@ -32,13 +32,16 @@ fun WorkflowEditorScreen(
     onSaveWorkflow: (WorkflowDefinition) -> Unit,
     onRunWorkflow: (WorkflowDefinition) -> Unit
 ) {
-    var wfName by remember { mutableStateOf(workflow.name) }
-    var wfDescription by remember { mutableStateOf(workflow.description) }
-    var wfVariables by remember { mutableStateOf(workflow.variables) }
-    var currentNodes by remember { mutableStateOf(workflow.nodes) }
+    var wfName by remember(workflow.id) { mutableStateOf(workflow.name) }
+    var wfDescription by remember(workflow.id) { mutableStateOf(workflow.description) }
+    var wfVariables by remember(workflow.id) { mutableStateOf(workflow.variables) }
+    var wfExecutionMode by remember(workflow.id) { mutableStateOf(workflow.executionPolicy.mode) }
+    var wfMaxIterations by remember(workflow.id) { mutableStateOf(workflow.executionPolicy.maxIterations.toString()) }
+    var wfLoopDelayMs by remember(workflow.id) { mutableStateOf(workflow.executionPolicy.loopDelayMs.toString()) }
+    var currentNodes by remember(workflow.id) { mutableStateOf(workflow.nodes) }
 
     var isRawJsonMode by remember { mutableStateOf(false) }
-    var rawJsonText by remember {
+    var rawJsonText by remember(workflow.id) {
         mutableStateOf(editorJson.encodeToString(WorkflowDefinition.serializer(), workflow))
     }
     var jsonError by remember { mutableStateOf<String?>(null) }
@@ -46,7 +49,6 @@ fun WorkflowEditorScreen(
     var expandedNodeIndex by remember { mutableStateOf<Int?>(0) }
     var showAddNodeSheet by remember { mutableStateOf(false) }
 
-    // State untuk VariableEditorBottomSheet (bisa mengedit parameter node atau variabel workflow)
     var editingNodeIndex by remember { mutableStateOf<Int?>(null) }
     var editingParamKey by remember { mutableStateOf<String?>(null) }
     var editingGlobalVarKey by remember { mutableStateOf<String?>(null) }
@@ -55,6 +57,11 @@ fun WorkflowEditorScreen(
         name = wfName.ifBlank { "Untitled Workflow" },
         description = wfDescription,
         variables = wfVariables,
+        executionPolicy = ExecutionPolicy(
+            mode = wfExecutionMode,
+            maxIterations = wfMaxIterations.toIntOrNull() ?: 1,
+            loopDelayMs = wfLoopDelayMs.toLongOrNull()?.coerceAtLeast(100L) ?: 2000L
+        ),
         nodes = currentNodes
     )
 
@@ -69,6 +76,9 @@ fun WorkflowEditorScreen(
                 wfName = parsed.name
                 wfDescription = parsed.description
                 wfVariables = parsed.variables
+                wfExecutionMode = parsed.executionPolicy.mode
+                wfMaxIterations = parsed.executionPolicy.maxIterations.toString()
+                wfLoopDelayMs = parsed.executionPolicy.loopDelayMs.toString()
                 currentNodes = parsed.nodes
                 jsonError = null
                 isRawJsonMode = false
@@ -95,7 +105,7 @@ fun WorkflowEditorScreen(
             TopAppBar(
                 title = {
                     Text(
-                        wfName.ifBlank { "Editor Workflow" },
+                        wfName.ifBlank { "Workflow Editor" },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = FontWeight.Bold
@@ -176,7 +186,7 @@ fun WorkflowEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(top = 12.dp, bottom = 88.dp)
             ) {
-                // Metadata & Global Variables Card
+                // Metadata, ExecutionPolicy & Global Variables
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(
@@ -200,11 +210,48 @@ fun WorkflowEditorScreen(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Kebijakan Eksekusi:", style = MaterialTheme.typography.labelLarge)
+                                FilterChip(
+                                    selected = wfExecutionMode == ExecutionMode.ONCE,
+                                    onClick = { wfExecutionMode = ExecutionMode.ONCE },
+                                    label = { Text("ONCE") }
+                                )
+                                FilterChip(
+                                    selected = wfExecutionMode == ExecutionMode.LOOP,
+                                    onClick = { wfExecutionMode = ExecutionMode.LOOP },
+                                    label = { Text("LOOP") }
+                                )
+                            }
+
+                            if (wfExecutionMode == ExecutionMode.LOOP) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = wfMaxIterations,
+                                        onValueChange = { wfMaxIterations = it.filter { c -> c.isDigit() || c == '-' } },
+                                        label = { Text("Max Loop (0 = ∞)") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = wfLoopDelayMs,
+                                        onValueChange = { wfLoopDelayMs = it.filter { c -> c.isDigit() } },
+                                        label = { Text("Jeda Loop (ms)") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "Variabel Global ({{vars.*}})",
+                                    "Variabel Global ({{variables.*}})",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -223,8 +270,17 @@ fun WorkflowEditorScreen(
                                             modifier = Modifier.padding(10.dp).fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
-                                            Text("vars.$k", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                                            Text(v, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                                            Text(
+                                                "variables.$k (${v.detectType().name})",
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                            Text(
+                                                v.asPlainString(),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
                                         }
                                     }
                                 }
@@ -293,20 +349,20 @@ fun WorkflowEditorScreen(
                     .padding(bottom = 24.dp)
             ) {
                 Text(
-                    "Pilih Tipe Node Modular",
+                    "Template Cepat Node Modular",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.heightIn(max = 420.dp)
+                    modifier = Modifier.heightIn(max = 440.dp)
                 ) {
                     itemsIndexed(WorkflowNodePresets.allPresets) { _, preset ->
                         Card(
                             onClick = {
                                 val nextIndex = currentNodes.size + 1
-                                val uniqueId = "${preset.type.lowercase()}_$nextIndex"
+                                val uniqueId = "${preset.worker.lowercase().substringBefore("_")}_$nextIndex"
                                 currentNodes = currentNodes + preset.createDefault(uniqueId)
                                 expandedNodeIndex = currentNodes.lastIndex
                                 showAddNodeSheet = false
@@ -319,7 +375,7 @@ fun WorkflowEditorScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(preset.title, fontWeight = FontWeight.Bold)
-                                    Badge { Text(preset.type) }
+                                    Badge { Text("${preset.worker}:${preset.action}") }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(preset.summary, style = MaterialTheme.typography.bodySmall)
@@ -331,7 +387,6 @@ fun WorkflowEditorScreen(
         }
     }
 
-    // Bottom sheet editor parameter node
     val targetNodeIdx = editingNodeIndex
     val targetParamKey = editingParamKey
     if (targetNodeIdx != null && targetParamKey != null && targetNodeIdx in currentNodes.indices) {
@@ -339,23 +394,24 @@ fun WorkflowEditorScreen(
         val prevNodes = currentNodes.take(targetNodeIdx)
         val suggestions = buildList {
             prevNodes.forEach { prev ->
-                when (prev.type) {
-                    "HTTP" -> add("{{${prev.id}.body}}")
-                    "PYTHON" -> add("{{${prev.id}.status}}")
-                    "OFFSCREEN_WEB" -> add("{{${prev.id}.content}}")
-                    "SHELL" -> add("{{${prev.id}.stdout}}")
-                    "GEMINI_AI" -> add("{{${prev.id}.reply}}")
-                    "COMPUTE" -> add("{{${prev.id}.value}}")
-                    else -> add("{{${prev.id}.result}}")
+                when (prev.worker.uppercase()) {
+                    "NETWORK_HTTP", "HTTP" -> add("{{${prev.id}.output.body}}")
+                    "PYTHON_COMPUTE", "PYTHON" -> add("{{${prev.id}.output.status}}")
+                    "WEBVIEW_HEADLESS", "OFFSCREEN_WEB" -> add("{{${prev.id}.output.content}}")
+                    "SHIZUKU_SHELL", "SHELL" -> add("{{${prev.id}.output.stdout}}")
+                    "GEMINI_AI" -> add("{{${prev.id}.output.reply}}")
+                    "COMPUTE_KOTLIN", "COMPUTE" -> add("{{${prev.id}.output.value}}")
+                    else -> add("{{${prev.id}.output.result}}")
                 }
             }
-            wfVariables.keys.forEach { add("{{vars.$it}}") }
+            wfVariables.keys.forEach { add("{{variables.$it}}") }
             add("{{kv.gemini_api_key}}")
         }
 
+        val currentElem = targetNode.params[targetParamKey]
         VariableEditorBottomSheet(
             initialKey = targetParamKey,
-            initialValue = targetNode.parameters[targetParamKey] ?: "",
+            initialValue = currentElem?.asPlainString() ?: "",
             availableSuggestions = suggestions,
             onDismiss = {
                 editingNodeIndex = null
@@ -363,30 +419,32 @@ fun WorkflowEditorScreen(
             },
             onDelete = if (targetParamKey.isNotBlank()) {
                 {
-                    val newParams = targetNode.parameters.toMutableMap().apply { remove(targetParamKey) }
-                    currentNodes = currentNodes.toMutableList().apply { set(targetNodeIdx, targetNode.copy(parameters = newParams)) }
+                    val newParams = targetNode.params.toMutableMap().apply { remove(targetParamKey) }
+                    currentNodes = currentNodes.toMutableList().apply { set(targetNodeIdx, targetNode.copy(params = newParams)) }
                     editingNodeIndex = null
                     editingParamKey = null
                 }
             } else null,
             onSave = { newKey, newVal ->
-                val newParams = targetNode.parameters.toMutableMap().apply {
+                val newParams = targetNode.params.toMutableMap().apply {
                     if (targetParamKey.isNotBlank() && targetParamKey != newKey) remove(targetParamKey)
-                    put(newKey, newVal)
+                    val targetType = currentElem?.detectType() ?: VariableValueType.STRING
+                    put(newKey, stringToTypedJsonElement(newVal, targetType))
                 }
-                currentNodes = currentNodes.toMutableList().apply { set(targetNodeIdx, targetNode.copy(parameters = newParams)) }
+                currentNodes = currentNodes.toMutableList().apply { set(targetNodeIdx, targetNode.copy(params = newParams)) }
                 editingNodeIndex = null
                 editingParamKey = null
             }
         )
     }
 
-    // Bottom sheet editor global variables
     val globalVarKey = editingGlobalVarKey
     if (globalVarKey != null) {
+        val currentVarElem = wfVariables[globalVarKey]
         VariableEditorBottomSheet(
             initialKey = globalVarKey,
-            initialValue = wfVariables[globalVarKey] ?: "",
+            initialValue = currentVarElem?.asPlainString() ?: "",
+            availableSuggestions = listOf("true", "false", "10"),
             onDismiss = { editingGlobalVarKey = null },
             onDelete = if (globalVarKey.isNotBlank()) {
                 {
@@ -395,9 +453,16 @@ fun WorkflowEditorScreen(
                 }
             } else null,
             onSave = { newKey, newVal ->
+                val inferredType = when {
+                    currentVarElem != null -> currentVarElem.detectType()
+                    newVal.equals("true", ignoreCase = true) || newVal.equals("false", ignoreCase = true) -> VariableValueType.BOOLEAN
+                    newVal.toLongOrNull() != null || newVal.toDoubleOrNull() != null -> VariableValueType.NUMBER
+                    newVal.trim().startsWith("{") || newVal.trim().startsWith("[") -> VariableValueType.JSON
+                    else -> VariableValueType.STRING
+                }
                 wfVariables = wfVariables.toMutableMap().apply {
                     if (globalVarKey.isNotBlank() && globalVarKey != newKey) remove(globalVarKey)
-                    put(newKey, newVal)
+                    put(newKey, stringToTypedJsonElement(newVal, inferredType))
                 }
                 editingGlobalVarKey = null
             }
@@ -430,11 +495,12 @@ private fun NodeEditorCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${index + 1}. ${node.label.ifBlank { node.id }}",
+                        "${index + 1}. ${node.name.ifBlank { node.id }}",
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "ID: ${node.id} • Tipe: ${node.type}",
+                        "ID: ${node.id} • ${node.worker}${if (node.action.isNotBlank()) ":${node.action}" else ""}" +
+                            if (!node.next.isNullOrBlank()) " → ${node.next}" else "",
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -462,9 +528,28 @@ private fun NodeEditorCard(
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
-                        value = node.label,
-                        onValueChange = { onUpdateNode(node.copy(label = it)) },
-                        label = { Text("Label") },
+                        value = node.name,
+                        onValueChange = { onUpdateNode(node.copy(name = it)) },
+                        label = { Text("Nama Node") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = node.action,
+                        onValueChange = { onUpdateNode(node.copy(action = it.uppercase())) },
+                        label = { Text("Action") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = node.next ?: "",
+                        onValueChange = { onUpdateNode(node.copy(next = it.ifBlank { null })) },
+                        label = { Text("Next Node / END") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -475,7 +560,7 @@ private fun NodeEditorCard(
                 OutlinedTextField(
                     value = node.condition ?: "",
                     onValueChange = { onUpdateNode(node.copy(condition = it.ifBlank { null })) },
-                    label = { Text("Kondisi Opsional (mis. not_empty {{prev.body}})") },
+                    label = { Text("Kondisi (mis. not_empty {{prev.output.body}})") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -495,11 +580,14 @@ private fun NodeEditorCard(
                         Text("Lanjut jika error", style = MaterialTheme.typography.bodySmall)
                     }
                     OutlinedTextField(
-                        value = node.maxRetries.toString(),
-                        onValueChange = { v -> onUpdateNode(node.copy(maxRetries = v.toIntOrNull()?.coerceIn(0, 10) ?: 0)) },
-                        label = { Text("Max Retry") },
+                        value = node.retry.maxAttempts.toString(),
+                        onValueChange = { v ->
+                            val max = v.toIntOrNull()?.coerceIn(0, 10) ?: 0
+                            onUpdateNode(node.copy(retry = node.retry.copy(maxAttempts = max)))
+                        },
+                        label = { Text("Retry") },
                         singleLine = true,
-                        modifier = Modifier.width(100.dp)
+                        modifier = Modifier.width(92.dp)
                     )
                 }
 
@@ -516,7 +604,7 @@ private fun NodeEditorCard(
                     }
                 }
 
-                node.parameters.forEach { (k, v) ->
+                node.params.forEach { (k, v) ->
                     OutlinedCard(
                         onClick = { onEditParam(k) },
                         modifier = Modifier
@@ -526,7 +614,7 @@ private fun NodeEditorCard(
                         Column(modifier = Modifier.padding(10.dp)) {
                             Text(k, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                             Text(
-                                v,
+                                v.asPlainString(),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
                                 maxLines = 3,

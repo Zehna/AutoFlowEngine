@@ -14,10 +14,16 @@ import com.taras.autoflow.engine.ExecutionContext
 import com.taras.autoflow.engine.NodeExecutionResult
 import com.taras.autoflow.service.NodeWorker
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 class HeadlessWebViewWorker(private val appContext: Context) : NodeWorker {
+    companion object {
+        const val SHARED_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override suspend fun execute(parameters: Map<String, String>, context: ExecutionContext): NodeExecutionResult =
         suspendCancellableCoroutine { cont ->
@@ -26,16 +32,25 @@ class HeadlessWebViewWorker(private val appContext: Context) : NodeWorker {
                 return@suspendCancellableCoroutine
             }
             val jsExtract = parameters["js_extract"]?.takeIf { it.isNotBlank() } ?: "document.title"
-            val waitMs = parameters["wait_ms"]?.toLongOrNull()?.coerceIn(0L, 15_000L) ?: 1200L
+            val waitSelector = parameters["wait_for_selector"]?.takeIf { it.isNotBlank() }
+                ?: parameters["selector"]?.takeIf { it.isNotBlank() }
+            val waitMs = parameters["wait_ms"]?.toLongOrNull()?.coerceIn(0L, 15_000L) ?: 800L
+            val pollIntervalMs = parameters["poll_interval_ms"]?.toLongOrNull()?.coerceIn(150L, 3000L) ?: 400L
             val timeoutMs = parameters["timeout_ms"]?.toLongOrNull()?.coerceIn(3000L, 60_000L) ?: 25_000L
 
             val mainHandler = Handler(Looper.getMainLooper())
             val completed = AtomicBoolean(false)
 
             mainHandler.post {
+                val cookieManager = CookieManager.getInstance().apply {
+                    setAcceptCookie(true)
+                }
+
                 val webView = WebView(appContext).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.userAgentString = SHARED_USER_AGENT
+                    cookieManager.setAcceptThirdPartyCookies(this, true)
                 }
 
                 fun finishOnce(result: NodeExecutionResult) {
@@ -65,10 +80,35 @@ class HeadlessWebViewWorker(private val appContext: Context) : NodeWorker {
                     }
                 }
 
+                fun runExtraction(view: WebView?) {
+                    view?.evaluateJavascript(
+                        "try { window.NativeBridge.onDataReceived(String(($jsExtract))); } catch(e) { window.NativeBridge.onDataReceived('JS_ERROR: ' + e.message); }",
+                        null
+                    )
+                }
+
+                fun pollSelectorAndExtract(view: WebView?) {
+                    if (completed.get() || view == null) return
+                    if (waitSelector == null) {
+                        mainHandler.postDelayed({ runExtraction(view) }, waitMs)
+                        return
+                    }
+                    val quotedSelector = JSONObject.quote(waitSelector)
+                    view.evaluateJavascript(
+                        "Boolean(document.querySelector($quotedSelector))"
+                    ) { result ->
+                        if (completed.get()) return@evaluateJavascript
+                        if (result == "true") {
+                            mainHandler.postDelayed({ runExtraction(view) }, waitMs.coerceAtMost(500L))
+                        } else {
+                            mainHandler.postDelayed({ pollSelectorAndExtract(view) }, pollIntervalMs)
+                        }
+                    }
+                }
+
                 class WebScraperBridge {
                     @JavascriptInterface
                     fun onDataReceived(data: String) {
-                        val cookieManager = CookieManager.getInstance()
                         cookieManager.flush()
                         val cookies = cookieManager.getCookie(url) ?: ""
                         finishOnce(
@@ -81,20 +121,13 @@ class HeadlessWebViewWorker(private val appContext: Context) : NodeWorker {
 
                 webView.addJavascriptInterface(WebScraperBridge(), "NativeBridge")
                 webView.webViewClient = object : WebViewClient() {
-                    private var extractionScheduled = false
+                    private var pollingStarted = false
 
                     override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                         super.onPageFinished(view, loadedUrl)
-                        if (extractionScheduled || completed.get()) return
-                        extractionScheduled = true
-                        mainHandler.postDelayed({
-                            if (!completed.get()) {
-                                view?.evaluateJavascript(
-                                    "try { window.NativeBridge.onDataReceived(String(($jsExtract))); } catch(e) { window.NativeBridge.onDataReceived('JS_ERROR: ' + e.message); }",
-                                    null
-                                )
-                            }
-                        }, waitMs)
+                        if (pollingStarted || completed.get()) return
+                        pollingStarted = true
+                        pollSelectorAndExtract(view)
                     }
 
                     override fun onReceivedError(

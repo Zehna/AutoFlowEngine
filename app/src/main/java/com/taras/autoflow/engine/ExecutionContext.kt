@@ -1,11 +1,13 @@
 package com.taras.autoflow.engine
 
+import kotlinx.serialization.json.JsonElement
 import org.json.JSONArray
 import org.json.JSONObject
 
 class ExecutionContext(
     val workflowId: String,
-    private val variables: Map<String, String> = emptyMap(),
+    val cycle: Int = 1,
+    private val variables: Map<String, JsonElement> = emptyMap(),
     private val kvLookup: (String) -> String? = { null },
     private val outputsMap: MutableMap<String, JSONObject> = mutableMapOf()
 ) {
@@ -17,7 +19,11 @@ class ExecutionContext(
 
     fun getAllOutputsJson(): String {
         val root = JSONObject()
-        root.put("vars", JSONObject(variables))
+        val varsObj = JSONObject()
+        variables.forEach { (k, v) -> varsObj.put(k, v.asPlainString()) }
+        root.put("variables", varsObj)
+        root.put("vars", varsObj)
+        root.put("cycle", cycle)
         outputsMap.forEach { (nodeId, jsonObj) ->
             root.put(nodeId, jsonObj)
         }
@@ -25,20 +31,38 @@ class ExecutionContext(
     }
 
     fun resolvePlaceholders(template: String): String {
+        val singleCycleResolved = template.replace("{{cycle}}", cycle.toString())
         val pattern = Regex("\\{\\{([a-zA-Z0-9_-]+)\\.([a-zA-Z0-9_.-]+)\\}\\}")
-        return pattern.replace(template) { match ->
+        return pattern.replace(singleCycleResolved) { match ->
             val rootKey = match.groupValues[1]
             val path = match.groupValues[2]
 
             when (rootKey) {
-                "vars" -> variables[path] ?: ""
+                "variables", "vars" -> resolveVariablePath(path)
                 "kv" -> kvLookup(path) ?: ""
                 else -> {
                     val nodeJson = outputsMap[rootKey] ?: return@replace ""
-                    evaluateJsonPath(nodeJson, path)
+                    // Dukung format {{node_id.output.field}} maupun {{node_id.field}}
+                    val normalizedPath = if (path.startsWith("output.") && !nodeJson.has("output")) {
+                        path.removePrefix("output.")
+                    } else {
+                        path
+                    }
+                    evaluateJsonPath(nodeJson, normalizedPath)
                 }
             }
         }
+    }
+
+    private fun resolveVariablePath(path: String): String {
+        val firstKey = path.substringBefore(".")
+        val elem = variables[firstKey] ?: return ""
+        val plain = elem.asPlainString()
+        if (!path.contains(".")) return plain
+
+        val subPath = path.substringAfter(".")
+        val parsed = runCatching { JSONObject(plain) }.getOrNull() ?: return ""
+        return evaluateJsonPath(parsed, subPath)
     }
 
     fun evaluateCondition(condition: String?): Boolean {
@@ -82,7 +106,6 @@ class ExecutionContext(
         var current: Any? = root
 
         for (token in tokens) {
-            // Jika nilai saat ini berupa string JSON, parse otomatis agar akses field dalam JSON body berjalan mulus
             if (current is String) {
                 val trimmed = current.trim()
                 current = when {

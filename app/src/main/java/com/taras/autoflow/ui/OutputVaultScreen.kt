@@ -1,5 +1,7 @@
 package com.taras.autoflow.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,6 +37,14 @@ fun OutputVaultScreen(
     var selectedFilter by remember { mutableStateOf("ALL") }
     var expandedLogId by remember { mutableStateOf<Long?>(null) }
 
+    val createCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportVaultCsvToUri(uri)
+        }
+    }
+
     val filteredLogs = remember(logs, selectedFilter) {
         if (selectedFilter == "ALL") logs else logs.filter { it.status == selectedFilter }
     }
@@ -49,11 +60,17 @@ fun OutputVaultScreen(
                 },
                 actions = {
                     IconButton(onClick = {
+                        val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                        createCsvLauncher.launch("autoflow_vault_$stamp.csv")
+                    }) {
+                        Icon(Icons.Default.Download, contentDescription = "Simpan CSV")
+                    }
+                    IconButton(onClick = {
                         viewModel.exportVaultCsv { file ->
                             BundleShareHelper.shareFile(context, file)
                         }
                     }) {
-                        Icon(Icons.Default.Share, contentDescription = "Ekspor CSV")
+                        Icon(Icons.Default.Share, contentDescription = "Bagikan CSV")
                     }
                     IconButton(onClick = { viewModel.clearVaultLogs() }) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Bersihkan")

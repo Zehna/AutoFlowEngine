@@ -2,6 +2,7 @@ package com.taras.autoflow.workers
 
 import android.content.Context
 import android.net.Uri
+import android.webkit.CookieManager
 import com.taras.autoflow.data.AutoFlowDatabase
 import com.taras.autoflow.engine.ExecutionContext
 import com.taras.autoflow.engine.NodeExecutionResult
@@ -25,7 +26,8 @@ class NetworkHttpWorker(private val appContext: Context? = null) : NodeWorker {
         withContext(Dispatchers.IO) {
             val url = parameters["url"]?.takeIf { it.isNotBlank() }
                 ?: return@withContext NodeExecutionResult.Failure("URL wajib diisi")
-            val method = parameters["method"]?.uppercase() ?: "GET"
+            val method = (parameters["action"]?.takeIf { it.isNotBlank() } ?: parameters["method"])
+                ?.uppercase() ?: "GET"
             val bodyPayload = parameters["body"] ?: ""
             val headersJson = parameters["headers_json"]
             val useSavedCookies = parameters["use_saved_cookies"]?.equals("true", ignoreCase = true) == true
@@ -41,14 +43,18 @@ class NetworkHttpWorker(private val appContext: Context? = null) : NodeWorker {
                     }
                 }
 
-                if (useSavedCookies && appContext != null) {
-                    val host = runCatching { Uri.parse(url).host }.getOrNull()
-                    if (!host.isNullOrBlank()) {
-                        val dao = AutoFlowDatabase.getInstance(appContext).stateDao()
-                        val savedCookie = dao.getValueAnyNamespace("cookie_$host")
-                        if (!savedCookie.isNullOrBlank()) {
-                            requestBuilder.header("Cookie", savedCookie)
-                        }
+                if (useSavedCookies) {
+                    val webCookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+                    val kvCookie = if (appContext != null) {
+                        val host = runCatching { Uri.parse(url).host }.getOrNull()
+                        if (!host.isNullOrBlank()) {
+                            AutoFlowDatabase.getInstance(appContext).stateDao().getValueAnyNamespace("cookie_$host")
+                        } else null
+                    } else null
+
+                    val cookieHeader = webCookie?.takeIf { it.isNotBlank() } ?: kvCookie
+                    if (!cookieHeader.isNullOrBlank()) {
+                        requestBuilder.header("Cookie", cookieHeader)
                     }
                 }
 

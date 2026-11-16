@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Compile Release APKs & Create Release
+    name: Verify assembleDebug & Publish Release APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -45,6 +45,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Verify assembleDebug Builds
+        run: ./gradlew assembleDebug --stacktrace
+
       - name: Build Standard & Full Release APKs
         env:
           RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
@@ -61,8 +64,8 @@ jobs:
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           echo "=== Permissions in Standard APK ==="
           "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.0.0.apk
-          echo "=== Manifest check in Standard APK ==="
-          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.0.0.apk --file AndroidManifest.xml | grep -iE "accessibility|notification|alert_window|query_all|debuggable" || echo "Clean: no high-risk Play Protect flags!"
+          echo "=== Providers & Manifest check in Standard APK ==="
+          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.0.0.apk --file AndroidManifest.xml | grep -iE "fileprovider|ShizukuProvider|SYSTEM_ALERT_WINDOW|accessibility|BIND_NOTIFICATION_LISTENER|debuggable"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
@@ -84,12 +87,11 @@ jobs:
             --notes "### AutoFlow Engine v2.0.0
 
           Upgrade penuh menjadi **Modular Workflow Automation Engine**:
-          - **Workflow Library & Persistence (Room v3)**: Simpan, duplikasi, impor (.json/.zip), dan ekspor bundle (.zip) dengan sanitasi secret otomatis.
-          - **Visual & Raw JSON Dual-Mode Editor**: Tambah 9 tipe node modular (Python 3.11, HTTP REST, Headless WebView, UI Action, Shizuku Shell, Gemini AI, Compute/KV, Deduplicate, Delay), ubah urutan node, kondisi percabangan, retry policy, dan autocomplete variabel (\`{{node.field}}\`, \`{{vars.*}}\`, \`{{kv.*}}\`).
-          - **Live Execution Console & WorkManager Scheduler**: Eksekusi terjadwal berkala di latar belakang dan pemantauan log langkah real-time.
-          - **Browser Sesi Login & KV Store Secrets**: Tangkap cookie sesi WebView serta kelola API key dan deduplication state.
-          - **Play Protect Safe**: Varian \`Standard\` tetap bebas dari izin sensitif pemicu blokir Google Play Protect dan mempertahankan seluruh integrasi Shizuku, Battery Optimization, dan Notifikasi.
+          - **Modular JSON Schema & Orchestrator StateFlow**: Mendukung \`executionPolicy\` (\`ONCE\`/\`LOOP\`), linked \`nodes\` (\`next\`/\`END\`), kondisi percabangan, retry policy, dan resolusi path \`{{variables.key}}\` + \`{{node_id.output.field}}\`.
+          - **Pluggable Worker Registry**: \`SHIZUKU_SHELL\` (\`EXEC\`, \`LAUNCH_COMPONENT\`, \`FORCE_STOP\`, \`PUT_SETTING\`, \`TAP\`), \`WEBVIEW_HEADLESS\` (SPA selector polling + shared CookieManager), \`NETWORK_HTTP\`, \`COMPUTE_KOTLIN\` (Room KV \`DEDUPLICATE\` dengan TTL), \`GEMINI_AI\`, \`PYTHON_COMPUTE\` (\`RUN_INLINE\` & \`CALL_MODULE\`), dan \`DELAY\`.
+          - **Foreground Service & Floating STOP Bubble**: Notifikasi persisten dengan tombol kontrol **Pause**, **Resume**, **Stop**, serta \`FloatingControlOverlay\`.
+          - **Dashboard UI & Navigation Drawer (\`≡\`)**: Active Execution Telemetry Card, daftar Workflow Terpasang (\`filesDir/workflows/\`), import \`.json\`/\`.zip\` (Zip-Slip protection), type-aware Variable Configurator sheet, Live Execution Console auto-scroll, Session WebView Login, Dual-mode Workflow Editor, dan Output Vault CSV export.
 
           #### Varian APK:
-          1. **AutoFlowEngine-Standard-v2.0.0.apk** *(Direkomendasikan — bebas blokir Play Protect, UI automation via Shizuku)*
+          1. **AutoFlowEngine-Standard-v2.0.0.apk** *(Direkomendasikan — bebas izin sensitif pemicu blokir Play Protect)*
           2. **AutoFlowEngine-FullA11y-v2.0.0.apk** *(Varian lengkap dengan AccessibilityService & NotificationListener)*"

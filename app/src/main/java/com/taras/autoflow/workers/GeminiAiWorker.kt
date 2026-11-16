@@ -39,6 +39,10 @@ class GeminiAiWorker(private val appContext: Context? = null) : NodeWorker {
             val prompt = parameters["prompt"]?.takeIf { it.isNotBlank() }
                 ?: return@withContext NodeExecutionResult.Failure("Prompt kosong")
             val model = parameters["model"]?.takeIf { it.isNotBlank() } ?: "gemini-2.5-flash"
+            val action = parameters["action"]?.uppercase().orEmpty()
+            val expectJson = action == "ANALYZE_JSON" ||
+                parameters["response_mime_type"] == "application/json" ||
+                parameters["json_mode"]?.equals("true", ignoreCase = true) == true
             val systemInstruction = parameters["system_instruction"]
             val imagePath = parameters["image_path"]
 
@@ -71,6 +75,11 @@ class GeminiAiWorker(private val appContext: Context? = null) : NodeWorker {
                         put("parts", JSONArray().put(JSONObject().put("text", systemInstruction)))
                     })
                 }
+                if (expectJson) {
+                    put("generationConfig", JSONObject().apply {
+                        put("responseMimeType", "application/json")
+                    })
+                }
                 put("contents", JSONArray().apply {
                     put(JSONObject().apply {
                         put("parts", partsArray)
@@ -95,7 +104,13 @@ class GeminiAiWorker(private val appContext: Context? = null) : NodeWorker {
                             ?.optJSONObject(0)
                             ?.optString("text") ?: ""
 
-                        NodeExecutionResult.Success(mapOf("reply" to text, "model" to model))
+                        val output = mutableMapOf<String, Any?>("reply" to text, "model" to model)
+                        if (expectJson) {
+                            runCatching { JSONObject(text) }.getOrNull()?.let { parsed ->
+                                parsed.keys().forEach { k -> output[k] = parsed.get(k) }
+                            }
+                        }
+                        NodeExecutionResult.Success(output)
                     } else {
                         NodeExecutionResult.Failure(
                             "Gemini API Error (${resp.code}): $respStr",

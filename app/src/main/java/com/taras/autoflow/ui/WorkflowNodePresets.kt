@@ -1,9 +1,11 @@
 package com.taras.autoflow.ui
 
 import com.taras.autoflow.engine.WorkflowNode
+import kotlinx.serialization.json.JsonPrimitive
 
 data class NodePresetMeta(
-    val type: String,
+    val worker: String,
+    val action: String,
     val title: String,
     val summary: String,
     val createDefault: (nodeId: String) -> WorkflowNode
@@ -12,153 +14,216 @@ data class NodePresetMeta(
 object WorkflowNodePresets {
     val allPresets: List<NodePresetMeta> = listOf(
         NodePresetMeta(
-            type = "PYTHON",
-            title = "Python 3.11 Script",
-            summary = "Jalankan skrip CPython lokal dengan requests, bs4, & akses ke context",
+            worker = "PYTHON_COMPUTE",
+            action = "RUN_INLINE",
+            title = "Python Inline Script",
+            summary = "Jalankan skrip CPython 3.11 lokal dengan requests, bs4, pillow & context",
             createDefault = { id -> createPythonScraperPreset(id) }
         ),
         NodePresetMeta(
-            type = "HTTP",
-            title = "HTTP REST Client",
-            summary = "Panggil API eksternal (GET/POST/PUT) dengan header & cookie tersimpan",
+            worker = "PYTHON_COMPUTE",
+            action = "CALL_MODULE",
+            title = "Python Module (.py)",
+            summary = "Panggil fungsi di file .py dari direktori filesDir/python_modules",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Panggil Modul Python",
+                    worker = "PYTHON_COMPUTE",
+                    action = "CALL_MODULE",
+                    params = mapOf(
+                        "module" to JsonPrimitive("custom_module"),
+                        "function" to JsonPrimitive("run"),
+                        "input_json" to JsonPrimitive("{}")
+                    )
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "NETWORK_HTTP",
+            action = "GET",
+            title = "HTTP GET Request",
+            summary = "Ambil data JSON/teks dari REST API dengan cookie & header kustom",
             createDefault = { id -> createHttpRequestPreset(id) }
         ),
         NodePresetMeta(
-            type = "OFFSCREEN_WEB",
-            title = "Headless WebView",
-            summary = "Buka halaman web SPA di latar belakang dan ekstrak data DOM via JS",
-            createDefault = { id -> createWebViewPreset(id) }
+            worker = "NETWORK_HTTP",
+            action = "POST_JSON",
+            title = "HTTP POST JSON",
+            summary = "Kirim payload JSON ke webhook atau REST API",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "HTTP POST JSON",
+                    worker = "NETWORK_HTTP",
+                    action = "POST_JSON",
+                    params = mapOf(
+                        "url" to JsonPrimitive("https://httpbin.org/post"),
+                        "body" to JsonPrimitive("{\"message\":\"{{variables.msg}}\"}"),
+                        "headers_json" to JsonPrimitive("{}"),
+                        "use_saved_cookies" to JsonPrimitive(false)
+                    )
+                )
+            }
         ),
         NodePresetMeta(
-            type = "UI_ACTION",
-            title = "UI Action (Shizuku / A11y)",
-            summary = "Tap, swipe, ketik teks, atau buka aplikasi target otomatis",
-            createDefault = { id -> createUiClickPreset(id) }
+            worker = "WEBVIEW_HEADLESS",
+            action = "EXTRACT_DOM",
+            title = "Headless WebView (SPA)",
+            summary = "Muat halaman web SPA, polling selector DOM, dan ekstrak via JS",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "WebView Scraper",
+                    worker = "WEBVIEW_HEADLESS",
+                    action = "EXTRACT_DOM",
+                    params = mapOf(
+                        "url" to JsonPrimitive("https://example.com"),
+                        "wait_for_selector" to JsonPrimitive("h1"),
+                        "js_extract" to JsonPrimitive("document.title"),
+                        "wait_ms" to JsonPrimitive(1000)
+                    )
+                )
+            }
         ),
         NodePresetMeta(
-            type = "SHELL",
-            title = "Shizuku Shell Command",
+            worker = "SHIZUKU_SHELL",
+            action = "EXEC",
+            title = "Shizuku Shell (EXEC)",
             summary = "Jalankan perintah ADB shell tanpa root melalui Shizuku",
-            createDefault = { id -> createShellPreset(id) }
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Shizuku Shell",
+                    worker = "SHIZUKU_SHELL",
+                    action = "EXEC",
+                    params = mapOf("command" to JsonPrimitive("dumpsys battery | grep level"))
+                )
+            }
         ),
         NodePresetMeta(
-            type = "GEMINI_AI",
-            title = "Gemini AI Processor",
-            summary = "Analisis teks atau gambar lokal menggunakan model Gemini",
-            createDefault = { id -> createGeminiPreset(id) }
+            worker = "SHIZUKU_SHELL",
+            action = "TAP",
+            title = "Shizuku Tap / Swipe",
+            summary = "Kirim sentuhan koordinat layar (TAP) atau LAUNCH_COMPONENT / FORCE_STOP",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Shizuku UI Tap",
+                    worker = "SHIZUKU_SHELL",
+                    action = "TAP",
+                    params = mapOf("x" to JsonPrimitive(540), "y" to JsonPrimitive(960))
+                )
+            }
         ),
         NodePresetMeta(
-            type = "COMPUTE",
-            title = "Local Compute & KV Store",
-            summary = "KV_GET, KV_SET, JSON_EXTRACT, REGEX_MATCH, atau TEXT_TEMPLATE",
-            createDefault = { id -> createComputePreset(id) }
+            worker = "SHIZUKU_SHELL",
+            action = "LAUNCH_COMPONENT",
+            title = "Shizuku Launch App",
+            summary = "Buka aplikasi atau Activity target via Shizuku",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Buka Aplikasi",
+                    worker = "SHIZUKU_SHELL",
+                    action = "LAUNCH_COMPONENT",
+                    params = mapOf("package" to JsonPrimitive("com.android.settings"))
+                )
+            }
         ),
         NodePresetMeta(
-            type = "DEDUPLICATE",
-            title = "Deduplicate Guard",
-            summary = "Cegah pemrosesan ulang data yang sama berdasarkan key unik",
-            createDefault = { id -> createDeduplicatePreset(id) }
+            worker = "COMPUTE_KOTLIN",
+            action = "DEDUPLICATE",
+            title = "Deduplicate (TTL Guard)",
+            summary = "Cegah eksekusi duplikat menggunakan Room KV Store dengan TTL",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Cek Duplikat TTL",
+                    worker = "COMPUTE_KOTLIN",
+                    action = "DEDUPLICATE",
+                    params = mapOf(
+                        "key" to JsonPrimitive("item_unique_id"),
+                        "ttl_seconds" to JsonPrimitive(3600),
+                        "fail_on_duplicate" to JsonPrimitive(true)
+                    )
+                )
+            }
         ),
         NodePresetMeta(
-            type = "DELAY",
-            title = "Delay / Wait",
+            worker = "COMPUTE_KOTLIN",
+            action = "KV_SET",
+            title = "Kotlin Compute / KV Store",
+            summary = "Simpan/ambil KV, FILTER_JSON, JSON_EXTRACT, atau REGEX_MATCH",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Simpan KV",
+                    worker = "COMPUTE_KOTLIN",
+                    action = "KV_SET",
+                    params = mapOf(
+                        "key" to JsonPrimitive("sample_key"),
+                        "value" to JsonPrimitive("sample_value")
+                    )
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "GEMINI_AI",
+            action = "ANALYZE_JSON",
+            title = "Gemini AI Multimodal",
+            summary = "Analisis teks atau foto lokal dengan output terstruktur JSON",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Gemini AI",
+                    worker = "GEMINI_AI",
+                    action = "ANALYZE_JSON",
+                    params = mapOf(
+                        "model" to JsonPrimitive("gemini-2.5-flash"),
+                        "api_key" to JsonPrimitive("{{kv.gemini_api_key}}"),
+                        "prompt" to JsonPrimitive("Ringkas data berikut menjadi JSON {\"summary\": \"...\"}:\n{{prev.output.body}}")
+                    )
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "DELAY",
+            action = "WAIT",
+            title = "Delay / Jeda",
             summary = "Jeda eksekusi beberapa milidetik antar langkah",
-            createDefault = { id -> createDelayPreset(id) }
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Jeda Waktu",
+                    worker = "DELAY",
+                    action = "WAIT",
+                    params = mapOf("duration_ms" to JsonPrimitive(1500))
+                )
+            }
         )
     )
 
     fun createPythonScraperPreset(id: String = "py_step"): WorkflowNode = WorkflowNode(
         id = id,
-        label = "Skrip Python",
-        type = "PYTHON",
-        parameters = mapOf(
-            "script" to "import json\noutputs['status'] = 'OK'\noutputs['keys'] = list(context.keys())",
-            "input_json" to "{}"
+        name = "Skrip Python",
+        worker = "PYTHON_COMPUTE",
+        action = "RUN_INLINE",
+        params = mapOf(
+            "script" to JsonPrimitive("outputs['status'] = 'OK'\noutputs['keys'] = list(context.keys())"),
+            "input_json" to JsonPrimitive("{}")
         )
     )
 
     fun createHttpRequestPreset(id: String = "http_step"): WorkflowNode = WorkflowNode(
         id = id,
-        label = "HTTP Request",
-        type = "HTTP",
-        parameters = mapOf(
-            "url" to "https://httpbin.org/get",
-            "method" to "GET",
-            "headers_json" to "{}",
-            "use_saved_cookies" to "false"
-        )
-    )
-
-    fun createWebViewPreset(id: String = "web_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "WebView Scraper",
-        type = "OFFSCREEN_WEB",
-        parameters = mapOf(
-            "url" to "https://example.com",
-            "wait_ms" to "1200",
-            "js_extract" to "document.title"
-        )
-    )
-
-    fun createUiClickPreset(id: String = "ui_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "UI Tap / Launch",
-        type = "UI_ACTION",
-        parameters = mapOf(
-            "action" to "CLICK",
-            "x" to "540",
-            "y" to "960"
-        )
-    )
-
-    fun createShellPreset(id: String = "shell_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "ADB Shell",
-        type = "SHELL",
-        parameters = mapOf(
-            "command" to "dumpsys battery | grep level"
-        )
-    )
-
-    fun createGeminiPreset(id: String = "ai_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "Gemini AI",
-        type = "GEMINI_AI",
-        parameters = mapOf(
-            "model" to "gemini-2.5-flash",
-            "api_key" to "{{kv.gemini_api_key}}",
-            "prompt" to "Analisis teks berikut:\n{{prev.body}}"
-        )
-    )
-
-    fun createComputePreset(id: String = "compute_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "KV & Transform",
-        type = "COMPUTE",
-        parameters = mapOf(
-            "operation" to "KV_SET",
-            "key" to "sample_key",
-            "value" to "sample_value"
-        )
-    )
-
-    fun createDeduplicatePreset(id: String = "dedup_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "Cek Duplikat",
-        type = "DEDUPLICATE",
-        parameters = mapOf(
-            "operation" to "DEDUPLICATE",
-            "key" to "item_unique_id",
-            "fail_on_duplicate" to "true"
-        )
-    )
-
-    fun createDelayPreset(id: String = "delay_step"): WorkflowNode = WorkflowNode(
-        id = id,
-        label = "Jeda Waktu",
-        type = "DELAY",
-        parameters = mapOf(
-            "duration_ms" to "1500"
+        name = "HTTP Request",
+        worker = "NETWORK_HTTP",
+        action = "GET",
+        params = mapOf(
+            "url" to JsonPrimitive("https://httpbin.org/get"),
+            "headers_json" to JsonPrimitive("{}"),
+            "use_saved_cookies" to JsonPrimitive(false)
         )
     )
 }

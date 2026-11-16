@@ -4,13 +4,13 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.taras.autoflow.data.AutoFlowDatabase
 import com.taras.autoflow.engine.AutoFlowRuntime
-import com.taras.autoflow.engine.WorkflowOrchestrator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonPrimitive
 
 class AutoFlowNotificationListener : NotificationListenerService() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -43,16 +43,12 @@ class AutoFlowNotificationListener : NotificationListenerService() {
                     AutoFlowRuntime.appendLog("🔔 Trigger notifikasi dari $pkg memicu '${def.name}'")
                     val enrichedDef = def.copy(
                         variables = def.variables + mapOf(
-                            "notif_package" to pkg,
-                            "notif_title" to title,
-                            "notif_text" to text
+                            "notif_package" to JsonPrimitive(pkg),
+                            "notif_title" to JsonPrimitive(title),
+                            "notif_text" to JsonPrimitive(text)
                         )
                     )
-                    val orchestrator = WorkflowOrchestrator(
-                        applicationContext,
-                        WorkerRegistryFactory.create(applicationContext)
-                    )
-                    orchestrator.run(enrichedDef)
+                    AutoFlowRuntime.getOrchestrator(applicationContext).run(enrichedDef)
                     break
                 }
             }

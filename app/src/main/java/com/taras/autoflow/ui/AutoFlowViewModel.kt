@@ -10,30 +10,34 @@ import com.taras.autoflow.data.AutoFlowDatabase
 import com.taras.autoflow.data.BuiltInWorkflowSeeds
 import com.taras.autoflow.data.CsvVaultExporter
 import com.taras.autoflow.data.WorkflowEntity
+import com.taras.autoflow.data.WorkflowFileRepository
 import com.taras.autoflow.data.WorkflowStateEntity
 import com.taras.autoflow.engine.AutoFlowRuntime
+import com.taras.autoflow.engine.OrchestratorState
 import com.taras.autoflow.engine.WorkflowBundleExporter
 import com.taras.autoflow.engine.WorkflowBundleImporter
 import com.taras.autoflow.engine.WorkflowDefinition
-import com.taras.autoflow.engine.WorkflowOrchestrator
-import com.taras.autoflow.service.WorkerRegistryFactory
 import com.taras.autoflow.service.WorkflowForegroundService
 import com.taras.autoflow.worker.WorkflowTriggerScheduler
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 
 class AutoFlowViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AutoFlowDatabase.getInstance(application)
-    private val registry = WorkerRegistryFactory.create(application)
-    private val orchestrator = WorkflowOrchestrator(application, registry)
+    private val fileRepo = WorkflowFileRepository(application)
+    private val orchestrator = AutoFlowRuntime.getOrchestrator(application)
+
+    val orchestratorState: StateFlow<OrchestratorState> = orchestrator.state
+    val consoleLogs: StateFlow<List<String>> = orchestrator.logs
 
     val workflows = db.workflowDao().observeAllWorkflows().stateIn(
         viewModelScope,
@@ -56,14 +60,9 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val events = _events.asSharedFlow()
 
-    private var activeExecutionJob: Job? = null
-
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            if (db.workflowDao().getWorkflowCount() == 0) {
-                val seeds = BuiltInWorkflowSeeds.getStarterWorkflows().map { WorkflowEntity.fromDefinition(it) }
-                db.workflowDao().insertAllIgnore(seeds)
-            }
+            fileRepo.initializeAndSync()
         }
     }
 
@@ -73,51 +72,63 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
             id = "wf_$shortId",
             name = "Workflow Baru ($shortId)",
             description = "Alur kerja modular kustom",
-            nodes = listOf(WorkflowNodePresets.createPythonScraperPreset().copy(id = "step_1"))
+            nodes = listOf(WorkflowNodePresets.createPythonScraperPreset("step_1"))
         )
     }
 
     fun startWorkflow(definition: WorkflowDefinition) {
-        if (AutoFlowRuntime.isEngineActive.value) {
-            _events.tryEmit("Engine masih berjalan. Hentikan dulu sebelum memulai workflow baru.")
+        val cur = orchestrator.state.value
+        if (cur is OrchestratorState.Running || cur is OrchestratorState.Paused) {
+            _events.tryEmit("Engine masih aktif. Hentikan dulu sebelum memulai workflow baru.")
             return
         }
         val app = getApplication<Application>()
-        runCatching {
-            val serviceIntent = Intent(app, WorkflowForegroundService::class.java)
+        val serialized = Json.encodeToString(WorkflowDefinition.serializer(), definition)
+        val started = runCatching {
+            val serviceIntent = Intent(app, WorkflowForegroundService::class.java).apply {
+                action = WorkflowForegroundService.ACTION_START
+                putExtra(WorkflowForegroundService.EXTRA_WORKFLOW_JSON, serialized)
+            }
             ContextCompat.startForegroundService(app, serviceIntent)
-        }
+            true
+        }.getOrDefault(false)
 
-        activeExecutionJob = viewModelScope.launch(Dispatchers.Default) {
-            orchestrator.run(definition)
+        if (!started) {
+            viewModelScope.launch(Dispatchers.Default) {
+                orchestrator.run(definition)
+            }
         }
     }
 
+    fun pauseExecution() {
+        orchestrator.pause()
+        sendServiceAction(WorkflowForegroundService.ACTION_PAUSE)
+    }
+
+    fun resumeExecution() {
+        orchestrator.resume()
+        sendServiceAction(WorkflowForegroundService.ACTION_RESUME)
+    }
+
     fun stopExecution() {
-        AutoFlowRuntime.triggerEmergencyStop()
-        activeExecutionJob?.cancel()
-        activeExecutionJob = null
+        orchestrator.stop()
+        sendServiceAction(WorkflowForegroundService.ACTION_STOP)
+    }
+
+    private fun sendServiceAction(actionName: String) {
         val app = getApplication<Application>()
         runCatching {
-            val stopIntent = Intent(app, WorkflowForegroundService::class.java).apply {
-                action = WorkflowForegroundService.ACTION_STOP
+            val intent = Intent(app, WorkflowForegroundService::class.java).apply {
+                action = actionName
             }
-            app.startService(stopIntent)
+            app.startService(intent)
         }
     }
 
     fun saveWorkflow(definition: WorkflowDefinition) {
         viewModelScope.launch(Dispatchers.IO) {
-            val existing = db.workflowDao().getWorkflowById(definition.id)
-            val entity = WorkflowEntity.fromDefinition(
-                definition = definition,
-                isScheduled = existing?.isScheduled ?: false,
-                scheduleIntervalMinutes = existing?.scheduleIntervalMinutes ?: 15L,
-                lastRunAt = existing?.lastRunAt,
-                lastRunStatus = existing?.lastRunStatus
-            )
-            db.workflowDao().upsertWorkflow(entity)
-            _events.tryEmit("Workflow '${definition.name}' disimpan")
+            fileRepo.saveWorkflow(definition)
+            _events.tryEmit("Workflow '${definition.name}' disimpan ke filesDir/workflows")
         }
     }
 
@@ -128,7 +139,7 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
                 id = "wf_${UUID.randomUUID().toString().take(6)}",
                 name = "${orig.name} (Salinan)"
             )
-            db.workflowDao().upsertWorkflow(WorkflowEntity.fromDefinition(copyDef))
+            fileRepo.saveWorkflow(copyDef)
             _events.tryEmit("Workflow diduplikasi")
         }
     }
@@ -136,7 +147,7 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
     fun deleteWorkflow(workflowId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             WorkflowTriggerScheduler.cancelScheduledWorkflow(getApplication(), workflowId)
-            db.workflowDao().deleteWorkflowById(workflowId)
+            fileRepo.deleteWorkflow(workflowId)
             _events.tryEmit("Workflow dihapus")
         }
     }
@@ -146,7 +157,7 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             if (enabled) {
                 WorkflowTriggerScheduler.schedulePeriodicWorkflow(getApplication(), entity.id, safeInterval)
-                _events.tryEmit("Jadwal otomatis diaktifkan (tiap $safeInterval menit)")
+                _events.tryEmit("Jadwal otomatis aktif (tiap $safeInterval menit)")
             } else {
                 WorkflowTriggerScheduler.cancelScheduledWorkflow(getApplication(), entity.id)
                 _events.tryEmit("Jadwal otomatis dimatikan")
@@ -157,8 +168,11 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
 
     fun restoreStarterWorkflows() {
         viewModelScope.launch(Dispatchers.IO) {
-            val seeds = BuiltInWorkflowSeeds.getStarterWorkflows().map { WorkflowEntity.fromDefinition(it) }
-            db.workflowDao().insertAllIgnore(seeds)
+            BuiltInWorkflowSeeds.getStarterWorkflows().forEach { def ->
+                if (db.workflowDao().getWorkflowById(def.id) == null) {
+                    fileRepo.saveWorkflow(def)
+                }
+            }
             _events.tryEmit("Preset starter workflow ditambahkan")
         }
     }
@@ -167,13 +181,18 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val imported = WorkflowBundleImporter.importFromUri(getApplication(), uri)
-                val finalDef = if (db.workflowDao().getWorkflowById(imported.id) != null) {
-                    imported.copy(id = "${imported.id}_${UUID.randomUUID().toString().take(4)}")
-                } else {
-                    imported
+                imported.workflows.forEach { wf ->
+                    val finalDef = if (db.workflowDao().getWorkflowById(wf.id) != null) {
+                        wf.copy(id = "${wf.id}_${UUID.randomUUID().toString().take(4)}")
+                    } else {
+                        wf
+                    }
+                    fileRepo.saveWorkflow(finalDef)
                 }
-                db.workflowDao().upsertWorkflow(WorkflowEntity.fromDefinition(finalDef))
-                _events.tryEmit("Berhasil mengimpor '${finalDef.name}'")
+                val pyMsg = if (imported.pythonModulesExtracted.isNotEmpty()) {
+                    " + ${imported.pythonModulesExtracted.size} modul Python"
+                } else ""
+                _events.tryEmit("Berhasil mengimpor ${imported.workflows.size} workflow$pyMsg")
             }.onFailure { err ->
                 _events.tryEmit("Gagal impor: ${err.message}")
             }
@@ -194,7 +213,7 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
             val host = runCatching { Uri.parse(url).host }.getOrNull()?.takeIf { it.isNotBlank() } ?: "default"
             val key = "cookie_$host"
             db.stateDao().putValue(WorkflowStateEntity(key = key, value = cookies, namespace = "cookies"))
-            _events.tryEmit("Cookie untuk $host disimpan ke KV Vault ($key)")
+            _events.tryEmit("Sesi & cookie untuk $host tersimpan ($key)")
         }
     }
 
@@ -210,6 +229,18 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             db.stateDao().deleteByKey(key)
             _events.tryEmit("Variabel KV '$key' dihapus")
+        }
+    }
+
+    fun exportVaultCsvToUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val snapshot = db.logDao().getFullLogsSnapshot()
+                CsvVaultExporter.exportToUri(getApplication(), uri, snapshot)
+                _events.tryEmit("CSV Vault berhasil disimpan (${snapshot.size} baris)")
+            }.onFailure { err ->
+                _events.tryEmit("Gagal ekspor CSV: ${err.message}")
+            }
         }
     }
 

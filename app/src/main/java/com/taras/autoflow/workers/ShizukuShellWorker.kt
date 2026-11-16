@@ -8,14 +8,66 @@ import kotlin.random.Random
 
 class ShizukuShellWorker : NodeWorker {
     override suspend fun execute(parameters: Map<String, String>, context: ExecutionContext): NodeExecutionResult {
-        val command = parameters["command"]
-            ?: return NodeExecutionResult.Failure("Perintah shell kosong")
+        val action = parameters["action"]?.uppercase()?.ifBlank { null }
+            ?: if (parameters.containsKey("command")) "EXEC" else "EXEC"
 
-        val result = ShizukuHelper.runShell(command)
-        return result.fold(
+        val command = when (action) {
+            "EXEC" -> {
+                parameters["command"]?.takeIf { it.isNotBlank() }
+                    ?: return NodeExecutionResult.Failure("Parameter 'command' kosong")
+            }
+            "LAUNCH_COMPONENT", "LAUNCH_APP" -> {
+                val component = parameters["component"]?.trim()
+                val pkg = parameters["package"]?.trim()
+                when {
+                    !component.isNullOrEmpty() -> "am start -n $component"
+                    !pkg.isNullOrEmpty() -> "monkey -p $pkg -c android.intent.category.LAUNCHER 1"
+                    else -> return NodeExecutionResult.Failure("Parameter 'component' atau 'package' wajib diisi")
+                }
+            }
+            "FORCE_STOP" -> {
+                val pkg = parameters["package"]?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: return NodeExecutionResult.Failure("Parameter 'package' wajib diisi untuk FORCE_STOP")
+                "am force-stop $pkg"
+            }
+            "PUT_SETTING" -> {
+                val ns = parameters["namespace"]?.lowercase()?.takeIf { it in listOf("system", "secure", "global") } ?: "system"
+                val key = parameters["key"]?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: return NodeExecutionResult.Failure("Parameter 'key' wajib diisi untuk PUT_SETTING")
+                val value = parameters["value"]?.replace("'", "'\\''") ?: ""
+                "settings put $ns $key '$value'"
+            }
+            "TAP", "CLICK" -> {
+                val jitter = { (Random.nextFloat() - 0.5f) * 4f }
+                val x = (parameters["x"]?.toFloatOrNull() ?: 540f) + jitter()
+                val y = (parameters["y"]?.toFloatOrNull() ?: 960f) + jitter()
+                "input tap ${x.toInt()} ${y.toInt()}"
+            }
+            "SWIPE" -> {
+                val x1 = parameters["x"]?.toFloatOrNull() ?: parameters["x1"]?.toFloatOrNull() ?: 540f
+                val y1 = parameters["y"]?.toFloatOrNull() ?: parameters["y1"]?.toFloatOrNull() ?: 1200f
+                val x2 = parameters["end_x"]?.toFloatOrNull() ?: parameters["x2"]?.toFloatOrNull() ?: x1
+                val y2 = parameters["end_y"]?.toFloatOrNull() ?: parameters["y2"]?.toFloatOrNull() ?: (y1 - 600f)
+                val duration = parameters["duration_ms"]?.toLongOrNull() ?: 350L
+                "input swipe ${x1.toInt()} ${y1.toInt()} ${x2.toInt()} ${y2.toInt()} $duration"
+            }
+            "TEXT" -> {
+                val text = parameters["text"]?.replace("'", "'\\''") ?: ""
+                "input text '$text'"
+            }
+            "KEYEVENT" -> {
+                val code = parameters["keycode"]?.trim()?.takeIf { it.isNotEmpty() } ?: "4"
+                "input keyevent $code"
+            }
+            else -> return NodeExecutionResult.Failure("Aksi SHIZUKU_SHELL '$action' tidak dikenal")
+        }
+
+        return ShizukuHelper.runShell(command).fold(
             onSuccess = { out ->
                 if (out.exitCode == 0) {
-                    NodeExecutionResult.Success(mapOf("stdout" to out.stdout))
+                    NodeExecutionResult.Success(
+                        mapOf("action" to action, "command" to command, "stdout" to out.stdout.trim())
+                    )
                 } else {
                     NodeExecutionResult.Failure("Shell exit ${out.exitCode}: ${out.stderr}")
                 }
@@ -28,46 +80,8 @@ class ShizukuShellWorker : NodeWorker {
 
     companion object {
         suspend fun executeUiViaShizuku(parameters: Map<String, String>): NodeExecutionResult {
-            val action = parameters["action"]?.uppercase() ?: "CLICK"
-            val jitter = { (Random.nextFloat() - 0.5f) * 6f }
-
-            val cmd = when (action) {
-                "CLICK" -> {
-                    val x = (parameters["x"]?.toFloatOrNull() ?: 500f) + jitter()
-                    val y = (parameters["y"]?.toFloatOrNull() ?: 1000f) + jitter()
-                    "input tap ${x.toInt()} ${y.toInt()}"
-                }
-                "SWIPE" -> {
-                    val x1 = (parameters["x"]?.toFloatOrNull() ?: 500f) + jitter()
-                    val y1 = (parameters["y"]?.toFloatOrNull() ?: 1000f) + jitter()
-                    val x2 = (parameters["end_x"]?.toFloatOrNull() ?: x1) + jitter()
-                    val y2 = (parameters["end_y"]?.toFloatOrNull() ?: (y1 - 600f)) + jitter()
-                    val duration = parameters["duration_ms"]?.toLongOrNull() ?: 350L
-                    "input swipe ${x1.toInt()} ${y1.toInt()} ${x2.toInt()} ${y2.toInt()} $duration"
-                }
-                "TEXT" -> {
-                    val text = parameters["text"]?.replace("'", "'\\''") ?: ""
-                    "input text '$text'"
-                }
-                "LAUNCH_APP" -> {
-                    val pkg = parameters["package"] ?: return NodeExecutionResult.Failure("Parameter 'package' kosong")
-                    "monkey -p $pkg -c android.intent.category.LAUNCHER 1"
-                }
-                else -> return NodeExecutionResult.Failure("Aksi UI '$action' tidak dikenal")
-            }
-
-            return ShizukuHelper.runShell(cmd).fold(
-                onSuccess = { out ->
-                    if (out.exitCode == 0) {
-                        NodeExecutionResult.Success(mapOf("action" to action, "backend" to "shizuku", "stdout" to out.stdout))
-                    } else {
-                        NodeExecutionResult.Failure("Shizuku UI gagal (${out.exitCode}): ${out.stderr}")
-                    }
-                },
-                onFailure = { err ->
-                    NodeExecutionResult.Failure("UI Action butuh Shizuku aktif: ${err.message}")
-                }
-            )
+            val worker = ShizukuShellWorker()
+            return worker.execute(parameters, ExecutionContext("ui_shizuku"))
         }
     }
 }

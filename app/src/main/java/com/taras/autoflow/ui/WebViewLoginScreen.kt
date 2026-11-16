@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.taras.autoflow.workers.HeadlessWebViewWorker
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -32,23 +33,27 @@ fun WebViewLoginScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Browser Sesi & Cookie", fontWeight = FontWeight.Bold) },
+                title = { Text("Session WebView Login", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
                     }
                 },
                 actions = {
-                    TextButton(onClick = {
-                        val target = webViewRef?.url ?: activeUrl
-                        val cookieManager = CookieManager.getInstance()
-                        cookieManager.flush()
-                        val cookies = cookieManager.getCookie(target) ?: ""
-                        onCookieCaptured(target, cookies)
-                    }) {
-                        Icon(Icons.Default.Save, contentDescription = null)
+                    Button(
+                        onClick = {
+                            val target = webViewRef?.url ?: activeUrl
+                            val cookieManager = CookieManager.getInstance()
+                            cookieManager.flush()
+                            val cookies = cookieManager.getCookie(target) ?: ""
+                            onCookieCaptured(target, cookies)
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Simpan Cookie")
+                        Text("Simpan Sesi")
                     }
                 }
             )
@@ -90,9 +95,14 @@ fun WebViewLoginScreen(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
+                    val cookieManager = CookieManager.getInstance().apply {
+                        setAcceptCookie(true)
+                    }
                     WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.userAgentString = HeadlessWebViewWorker.SHARED_USER_AGENT
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)

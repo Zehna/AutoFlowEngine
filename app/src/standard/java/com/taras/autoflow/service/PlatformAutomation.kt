@@ -3,11 +3,14 @@ package com.taras.autoflow.service
 import android.content.Context
 import com.taras.autoflow.engine.HealthCheckItem
 import com.taras.autoflow.engine.NodeExecutionResult
+import com.taras.autoflow.overlay.FloatingControlOverlay
 import com.taras.autoflow.util.ShizukuHelper
 import com.taras.autoflow.util.SystemPermissionHelper
 import com.taras.autoflow.workers.ShizukuShellWorker
 
 object PlatformAutomation {
+    private var activeOverlay: FloatingControlOverlay? = null
+
     suspend fun executeUiAction(parameters: Map<String, String>): NodeExecutionResult {
         return ShizukuShellWorker.executeUiViaShizuku(parameters)
     }
@@ -28,14 +31,25 @@ object PlatformAutomation {
             isGranted = SystemPermissionHelper.isBatteryOptimizationIgnored(context),
             actionLabel = "Atur",
             onAction = { SystemPermissionHelper.openBatteryOptimizationSettings(context) }
+        ),
+        HealthCheckItem(
+            title = "Floating STOP Bubble (Overlay)",
+            isGranted = SystemPermissionHelper.canDrawOverlays(context),
+            onAction = { SystemPermissionHelper.openOverlaySettings(context) }
         )
     )
 
     fun onNodeRunning(context: Context, nodeName: String) {
-        // Mode standar menggunakan notifikasi Foreground Service dengan tombol STOP
+        if (SystemPermissionHelper.canDrawOverlays(context)) {
+            if (activeOverlay == null) {
+                activeOverlay = FloatingControlOverlay(context)
+            }
+            activeOverlay?.show(nodeName)
+        }
     }
 
     fun onWorkflowFinished() {
-        // Tidak ada overlay mengambang yang perlu ditutup
+        activeOverlay?.hide()
+        activeOverlay = null
     }
 }
