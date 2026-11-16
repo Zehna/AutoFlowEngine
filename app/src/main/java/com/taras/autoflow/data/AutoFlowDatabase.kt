@@ -6,13 +6,18 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [WorkflowStateEntity::class, NodeExecutionLogEntity::class],
-    version = 2,
+    entities = [
+        WorkflowStateEntity::class,
+        NodeExecutionLogEntity::class,
+        WorkflowEntity::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class AutoFlowDatabase : RoomDatabase() {
     abstract fun stateDao(): WorkflowStateDao
     abstract fun logDao(): NodeExecutionLogDao
+    abstract fun workflowDao(): WorkflowEntityDao
 
     companion object {
         @Volatile

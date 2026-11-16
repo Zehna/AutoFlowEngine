@@ -14,6 +14,7 @@ data class WorkflowDefinition(
     val id: String,
     val name: String,
     val description: String = "",
+    val variables: Map<String, String> = emptyMap(),
     val triggers: List<TriggerConfig> = emptyList(),
     val nodes: List<WorkflowNode>
 )
@@ -27,8 +28,10 @@ data class TriggerConfig(
 @Serializable
 data class WorkflowNode(
     val id: String,
-    val type: String, // HTTP, PYTHON, UI_ACTION, OFFSCREEN_WEB, SHELL, DEDUPLICATE, GEMINI_AI
+    val label: String = "",
+    val type: String, // PYTHON, HTTP, OFFSCREEN_WEB, UI_ACTION, SHELL, GEMINI_AI, COMPUTE, DEDUPLICATE, DELAY
     val parameters: Map<String, String> = emptyMap(),
+    val condition: String? = null,
     val maxRetries: Int = 0,
     val retryDelayMs: Long = 1000L,
     val continueOnError: Boolean = false

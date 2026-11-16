@@ -56,40 +56,40 @@ jobs:
       - name: Prepare & Inspect Release APKs
         run: |
           mkdir -p release_apks
-          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v1.1.0.apk
-          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v1.1.0.apk
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v2.0.0.apk
+          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v2.0.0.apk
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           echo "=== Permissions in Standard APK ==="
-          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v1.1.0.apk
+          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.0.0.apk
           echo "=== Manifest check in Standard APK ==="
-          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v1.1.0.apk --file AndroidManifest.xml | grep -iE "accessibility|notification|alert_window|query_all|debuggable" || echo "Clean: no high-risk Play Protect flags!"
+          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.0.0.apk --file AndroidManifest.xml | grep -iE "accessibility|notification|alert_window|query_all|debuggable" || echo "Clean: no high-risk Play Protect flags!"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AutoFlowEngine-v1.1.0-APKs
+          name: AutoFlowEngine-v2.0.0-APKs
           path: release_apks/*.apk
 
-      - name: Publish GitHub Release v1.1.0
+      - name: Publish GitHub Release v2.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.1.0 --yes || true
-          git tag -f v1.1.0
-          git push -f origin v1.1.0 || true
-          gh release create v1.1.0 \
-            release_apks/AutoFlowEngine-Standard-v1.1.0.apk \
-            release_apks/AutoFlowEngine-FullA11y-v1.1.0.apk \
-            --title "AutoFlow Engine v1.1.0 (Play Protect Compatible)" \
-            --notes "### AutoFlow Engine v1.1.0
+          gh release delete v2.0.0 --yes || true
+          git tag -f v2.0.0
+          git push -f origin v2.0.0 || true
+          gh release create v2.0.0 \
+            release_apks/AutoFlowEngine-Standard-v2.0.0.apk \
+            release_apks/AutoFlowEngine-FullA11y-v2.0.0.apk \
+            --title "AutoFlow Engine v2.0.0 (Modular Workflow Automation Engine)" \
+            --notes "### AutoFlow Engine v2.0.0
 
-          Tersedia dua varian APK Release-signed:
+          Upgrade penuh menjadi **Modular Workflow Automation Engine**:
+          - **Workflow Library & Persistence (Room v3)**: Simpan, duplikasi, impor (.json/.zip), dan ekspor bundle (.zip) dengan sanitasi secret otomatis.
+          - **Visual & Raw JSON Dual-Mode Editor**: Tambah 9 tipe node modular (Python 3.11, HTTP REST, Headless WebView, UI Action, Shizuku Shell, Gemini AI, Compute/KV, Deduplicate, Delay), ubah urutan node, kondisi percabangan, retry policy, dan autocomplete variabel (\`{{node.field}}\`, \`{{vars.*}}\`, \`{{kv.*}}\`).
+          - **Live Execution Console & WorkManager Scheduler**: Eksekusi terjadwal berkala di latar belakang dan pemantauan log langkah real-time.
+          - **Browser Sesi Login & KV Store Secrets**: Tangkap cookie sesi WebView serta kelola API key dan deduplication state.
+          - **Play Protect Safe**: Varian \`Standard\` tetap bebas dari izin sensitif pemicu blokir Google Play Protect dan mempertahankan seluruh integrasi Shizuku, Battery Optimization, dan Notifikasi.
 
-          1. **AutoFlowEngine-Standard-v1.1.0.apk** *(Direkomendasikan)*
-             - Bebas izin sensitif yang memicu blokir Google Play Protect (*AccessibilityService* & *NotificationListener* dipisahkan).
-             - Dapat diinstal langsung di HP Android Indonesia.
-             - Mendukung penuh CPython 3.11 (Chaquopy), Room Database Output Vault, OkHttp, Offscreen WebView, Gemini AI, Foreground Service (dengan tombol STOP di notifikasi), dan UI Automation via **Shizuku**.
-
-          2. **AutoFlowEngine-FullA11y-v1.1.0.apk**
-             - Varian lengkap dengan *AccessibilityService* (gestur Bezier & Emergency Stop Volume Down 2x), *NotificationListener*, dan *Floating Overlay*.
-             - Catatan: Di Android Indonesia, instalasi sideload varian ini membutuhkan instalasi via Shizuku/ADB atau menonaktifkan sementara Play Protect."
+          #### Varian APK:
+          1. **AutoFlowEngine-Standard-v2.0.0.apk** *(Direkomendasikan — bebas blokir Play Protect, UI automation via Shizuku)*
+          2. **AutoFlowEngine-FullA11y-v2.0.0.apk** *(Varian lengkap dengan AccessibilityService & NotificationListener)*"
