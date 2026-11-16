@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AutoFlow Engine</string>
+    <string name="accessibility_service_description">
+        Memungkinkan AutoFlow Engine membaca elemen antarmuka, menyuntikkan gestur sentuhan alami, serta mendeteksi tombol Volume Down 2x sebagai Emergency Stop.
+    </string>
+</resources>

@@ -1,0 +1,67 @@
+name: Build & Release AutoFlow Engine APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Compile APK & Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Python 3.11 (for Chaquopy build tool)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoFlowEngine-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete v1.0.0 --yes || true
+          git tag -f v1.0.0
+          git push -f origin v1.0.0 || true
+          gh release create v1.0.0 app/build/outputs/apk/debug/app-debug.apk \
+            --title "AutoFlow Engine v1.0.0" \
+            --notes "### AutoFlow Engine v1.0.0 APK
+
+          Otomatisasi Android tingkat lanjut berbasis:
+          - Chaquopy (CPython 3.11 Runtime)
+          - Room Database (Output Vault & Deduplikasi)
+          - Accessibility Service (Humanized Bezier Motion & Emergency Stop)
+          - Jetpack Compose Material 3
+
+          #### Cara Install di HP Android:
+          1. Unduh file **app-debug.apk** di bawah ini.
+          2. Buka dan instal pada perangkat Android.
+          3. Jika sakelar Accessibility atau Notification Listener abu-abu (Restricted Settings di Android 13+):
+             - Masuk ke **Settings -> Apps -> AutoFlow Engine**
+             - Klik menu titik 3 di kanan atas -> **Allow restricted settings**
+             - Buka aplikasi dan aktifkan izin."
