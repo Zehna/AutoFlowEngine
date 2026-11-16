@@ -8,10 +8,10 @@ import com.taras.autoflow.engine.NodeExecutionResult
 import com.taras.autoflow.service.NodeWorker
 import org.json.JSONObject
 
-class PythonComputeWorker(private val context: Context) : NodeWorker {
+class PythonComputeWorker(private val appContext: Context) : NodeWorker {
     init {
         if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(context))
+            Python.start(AndroidPlatform(appContext))
         }
     }
 

@@ -40,13 +40,13 @@ class FloatingControlOverlay(private val context: Context) {
             setBackgroundColor(0xCC000000.toInt())
         }
 
-        val text = TextView(context).apply {
-            text = "AutoFlow: $nodeName"
+        val textView = TextView(context).apply {
+            setText("AutoFlow: $nodeName")
             setTextColor(0xFFFFFFFF.toInt())
         }
 
         val stopBtn = Button(context).apply {
-            text = "STOP"
+            setText("STOP")
             setBackgroundColor(0xFFD32F2F.toInt())
             setTextColor(0xFFFFFFFF.toInt())
             setOnClickListener {
@@ -55,7 +55,7 @@ class FloatingControlOverlay(private val context: Context) {
             }
         }
 
-        layout.addView(text)
+        layout.addView(textView)
         layout.addView(stopBtn)
 
         overlayView = layout

@@ -13,7 +13,7 @@ import com.taras.autoflow.service.NodeWorker
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-class HeadlessWebViewWorker(private val context: Context) : NodeWorker {
+class HeadlessWebViewWorker(private val appContext: Context) : NodeWorker {
     override suspend fun execute(parameters: Map<String, String>, context: ExecutionContext): NodeExecutionResult =
         suspendCancellableCoroutine { cont ->
             val url = parameters["url"] ?: run {
@@ -23,7 +23,7 @@ class HeadlessWebViewWorker(private val context: Context) : NodeWorker {
             val jsExtract = parameters["js_extract"] ?: "document.documentElement.outerHTML"
 
             Handler(Looper.getMainLooper()).post {
-                val webView = WebView(context).apply {
+                val webView = WebView(appContext).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                 }
