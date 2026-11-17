@@ -11,6 +11,71 @@ import kotlinx.serialization.json.JsonPrimitive
 object BuiltInWorkflowSeeds {
     fun getStarterWorkflows(): List<WorkflowDefinition> = listOf(
         WorkflowDefinition(
+            id = "wf_n8n_localhost_autostart",
+            name = "n8n Localhost: Auto-Start & Inspeksi",
+            description = "Menghidupkan server n8n lokal (127.0.0.1:5678) otomatis jika mati, mengambil daftar workflow, lalu menginspeksi node, koneksi & riwayat eksekusi.",
+            variables = mapOf(
+                "target_workflow_id" to JsonPrimitive(""),
+                "run_target" to JsonPrimitive(false)
+            ),
+            triggers = listOf(TriggerConfig(type = "MANUAL")),
+            executionPolicy = ExecutionPolicy(mode = ExecutionMode.ONCE, maxIterations = 1, loopDelayMs = 2000L),
+            nodes = listOf(
+                WorkflowNode(
+                    id = "n8n_boot",
+                    name = "Auto-Start Server n8n Lokal",
+                    worker = "N8N_BRIDGE",
+                    action = "ENSURE_SERVER",
+                    params = emptyMap(),
+                    retry = RetryPolicy(maxAttempts = 1, delayMs = 2000L),
+                    next = "n8n_list"
+                ),
+                WorkflowNode(
+                    id = "n8n_list",
+                    name = "Ambil Daftar Workflow n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "LIST_WORKFLOWS",
+                    params = mapOf(
+                        "auto_start" to JsonPrimitive("false")
+                    ),
+                    next = "n8n_inspect"
+                ),
+                WorkflowNode(
+                    id = "n8n_inspect",
+                    name = "Inspeksi Detail Workflow n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "INSPECT_WORKFLOW",
+                    condition = "not_empty {{n8n_list.output.first_id}}",
+                    params = mapOf(
+                        "workflow_id" to JsonPrimitive("{{variables.target_workflow_id}}")
+                    ),
+                    next = "n8n_execs"
+                ),
+                WorkflowNode(
+                    id = "n8n_execs",
+                    name = "Cek Riwayat Eksekusi n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "LIST_EXECUTIONS",
+                    params = mapOf(
+                        "workflow_id" to JsonPrimitive("{{n8n_inspect.output.id}}"),
+                        "limit" to JsonPrimitive(10)
+                    ),
+                    next = "n8n_run_optional"
+                ),
+                WorkflowNode(
+                    id = "n8n_run_optional",
+                    name = "Jalankan Target Workflow (Opsional)",
+                    worker = "N8N_BRIDGE",
+                    action = "EXECUTE_WORKFLOW",
+                    condition = "{{variables.run_target}} == true",
+                    params = mapOf(
+                        "workflow_id" to JsonPrimitive("{{n8n_inspect.output.id}}")
+                    ),
+                    next = "END"
+                )
+            )
+        ),
+        WorkflowDefinition(
             id = "wf_api_python_pipeline",
             name = "API Fetch → Python → KV Vault",
             description = "Mengambil metadata repo dari GitHub API, memprosesnya dengan Python 3.11, lalu menyimpan ringkasan ke Room KV Store.",

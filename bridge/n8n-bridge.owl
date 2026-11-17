@@ -1,0 +1,85 @@
+widget "n8n-bridge" {
+  page: 1
+  order: 5
+  size: 3x2
+  minSize: 2x2
+  meta { description: "n8n Localhost Server & AutoFlow Bridge"; version: "1.0"; owl: 16 }
+
+  source st = cmd("/usr/local/bin/autoflow-n8n-bridge ensure-json") every 15s json
+  let running = st.n8nRunning == true
+  let booting = st.n8nBooting == true
+  let wfCount = st.workflowCount ?? 0
+
+  Column {
+    fill: true
+    justify: spaceBetween
+    padding: 8
+    Row {
+      align: center
+      gap: 6
+      Box {
+        width: 8
+        height: 8
+        radius: 4
+        background: running ? green : booting ? yellow : muted
+      }
+      Column {
+        weight: 1
+        gap: 1
+        Text { text: "n8n Bridge"; font: mono; fontSize: 12; bold: true; color: foreground; maxLines: 1 }
+        Text {
+          text: running ? "ONLINE :5678" : booting ? "BOOT ${st.bootElapsedSeconds ?? 0}s" : "READY :15678"
+          font: mono
+          fontSize: 9
+          color: running ? green : booting ? yellow : muted
+          maxLines: 1
+        }
+      }
+      Text { text: "${wfCount}wf"; font: mono; fontSize: 9; style: muted }
+    }
+    Row {
+      fill: width
+      gap: 6
+      Box {
+        weight: 1
+        align: center
+        padding: [6, 5]
+        radius: 8 * corners
+        background: running ? alpha(red, 0.22) : alpha(accent, 0.22)
+        border: 1
+        borderColor: running ? alpha(red, 0.5) : alpha(accent, 0.5)
+        onTap: {
+          haptic()
+          run(running ? "/usr/local/bin/autoflow-n8n-bridge stop-n8n" : "/usr/local/bin/autoflow-n8n-bridge start-n8n")
+        }
+        Text {
+          text: running ? "Stop" : booting ? "Boot..." : "Start"
+          font: mono
+          fontSize: 10
+          bold: true
+          color: running ? red : accent
+        }
+      }
+      Box {
+        weight: 1
+        align: center
+        padding: [6, 5]
+        radius: 8 * corners
+        background: alpha(surface, 0.7)
+        border: 1
+        borderColor: alpha(foreground, 0.18)
+        onTap: {
+          haptic()
+          url("http://127.0.0.1:5678")
+        }
+        Text {
+          text: "Web ↗"
+          font: mono
+          fontSize: 10
+          bold: true
+          color: foreground
+        }
+      }
+    }
+  }
+}

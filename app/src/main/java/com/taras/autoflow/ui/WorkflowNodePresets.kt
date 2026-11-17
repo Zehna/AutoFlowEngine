@@ -14,6 +14,69 @@ data class NodePresetMeta(
 object WorkflowNodePresets {
     val allPresets: List<NodePresetMeta> = listOf(
         NodePresetMeta(
+            worker = "N8N_BRIDGE",
+            action = "ENSURE_SERVER",
+            title = "n8n Auto-Start Server",
+            summary = "Menyalakan server n8n lokal (:5678) otomatis jika belum berjalan",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Start n8n Server",
+                    worker = "N8N_BRIDGE",
+                    action = "ENSURE_SERVER"
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "N8N_BRIDGE",
+            action = "LIST_WORKFLOWS",
+            title = "n8n List Workflows",
+            summary = "Terhubung ke localhost n8n dan mengambil daftar seluruh workflow",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Daftar Workflow n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "LIST_WORKFLOWS",
+                    params = mapOf("auto_start" to JsonPrimitive("true"))
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "N8N_BRIDGE",
+            action = "INSPECT_WORKFLOW",
+            title = "n8n Inspect Workflow",
+            summary = "Inspeksi node, trigger, koneksi & sticky note di dalam workflow n8n",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Inspeksi Workflow n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "INSPECT_WORKFLOW",
+                    params = mapOf("workflow_id" to JsonPrimitive(""))
+                )
+            }
+        ),
+        NodePresetMeta(
+            worker = "N8N_BRIDGE",
+            action = "EXECUTE_WORKFLOW",
+            title = "n8n Execute Workflow",
+            summary = "Auto-start server n8n lalu jalankan workflow n8n via REST/Webhook/Bridge",
+            createDefault = { id ->
+                WorkflowNode(
+                    id = id,
+                    name = "Jalankan Workflow n8n",
+                    worker = "N8N_BRIDGE",
+                    action = "EXECUTE_WORKFLOW",
+                    params = mapOf(
+                        "workflow_id" to JsonPrimitive(""),
+                        "webhook_path" to JsonPrimitive(""),
+                        "payload_json" to JsonPrimitive("{}")
+                    )
+                )
+            }
+        ),
+        NodePresetMeta(
             worker = "PYTHON_COMPUTE",
             action = "RUN_INLINE",
             title = "Python Inline Script",

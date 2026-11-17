@@ -5,6 +5,7 @@ import com.taras.autoflow.workers.AccessibilityServiceWorker
 import com.taras.autoflow.workers.DelayWorker
 import com.taras.autoflow.workers.GeminiAiWorker
 import com.taras.autoflow.workers.HeadlessWebViewWorker
+import com.taras.autoflow.workers.N8nWorker
 import com.taras.autoflow.workers.NetworkHttpWorker
 import com.taras.autoflow.workers.PythonComputeWorker
 import com.taras.autoflow.workers.ShizukuShellWorker
@@ -20,6 +21,7 @@ object WorkerRegistryFactory {
         val geminiWorker = GeminiAiWorker(appContext)
         val uiWorker = AccessibilityServiceWorker()
         val delayWorker = DelayWorker()
+        val n8nWorker = N8nWorker(appContext)
 
         return WorkerRegistry().apply {
             // Nama Worker Standar v2
@@ -31,6 +33,7 @@ object WorkerRegistryFactory {
             register("GEMINI_AI", geminiWorker)
             register("UI_ACTION", uiWorker)
             register("DELAY", delayWorker)
+            register("N8N_BRIDGE", n8nWorker)
 
             // Alias Kompatibilitas
             register("PYTHON", pythonWorker)
@@ -39,6 +42,7 @@ object WorkerRegistryFactory {
             register("SHELL", shizukuWorker)
             register("COMPUTE", computeWorker)
             register("DEDUPLICATE", computeWorker)
+            register("N8N", n8nWorker)
         }
     }
 }

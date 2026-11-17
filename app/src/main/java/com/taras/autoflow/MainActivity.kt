@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 
 private sealed interface AppScreen {
     data object Dashboard : AppScreen
+    data object N8nInspector : AppScreen
     data object Vault : AppScreen
     data object WebLogin : AppScreen
     data object KvStore : AppScreen
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Dashboard) }
+                var webLoginInitialUrl by remember { mutableStateOf("https://github.com/login") }
                 val snackbarHostState = remember { SnackbarHostState() }
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
@@ -86,7 +88,7 @@ class MainActivity : ComponentActivity() {
                         ModalDrawerSheet {
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                "AutoFlow Engine v2",
+                                "AutoFlow Engine v2.1",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
@@ -105,10 +107,21 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                             )
                             NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Hub, contentDescription = null) },
+                                label = { Text("n8n Localhost") },
+                                selected = currentScreen is AppScreen.N8nInspector,
+                                onClick = {
+                                    currentScreen = AppScreen.N8nInspector
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                            )
+                            NavigationDrawerItem(
                                 icon = { Icon(Icons.Default.Language, contentDescription = null) },
                                 label = { Text("Session WebView Login") },
                                 selected = currentScreen is AppScreen.WebLogin,
                                 onClick = {
+                                    webLoginInitialUrl = "https://github.com/login"
                                     currentScreen = AppScreen.WebLogin
                                     scope.launch { drawerState.close() }
                                 },
@@ -155,6 +168,7 @@ class MainActivity : ComponentActivity() {
                             viewModel = viewModel,
                             snackbarHostState = snackbarHostState,
                             onOpenMenu = { scope.launch { drawerState.open() } },
+                            onOpenN8nInspector = { currentScreen = AppScreen.N8nInspector },
                             onCreateWorkflow = {
                                 currentScreen = AppScreen.Editor(viewModel.createNewWorkflowTemplate())
                             },
@@ -165,11 +179,20 @@ class MainActivity : ComponentActivity() {
                                 importBundleLauncher.launch(arrayOf("application/json", "application/zip", "*/*"))
                             }
                         )
+                        AppScreen.N8nInspector -> N8nInspectorScreen(
+                            viewModel = viewModel,
+                            onBack = { currentScreen = AppScreen.Dashboard },
+                            onOpenWebUi = { url ->
+                                webLoginInitialUrl = url
+                                currentScreen = AppScreen.WebLogin
+                            }
+                        )
                         AppScreen.Vault -> OutputVaultScreen(
                             viewModel = viewModel,
                             onBack = { currentScreen = AppScreen.Dashboard }
                         )
                         AppScreen.WebLogin -> WebViewLoginScreen(
+                            initialUrl = webLoginInitialUrl,
                             onBack = { currentScreen = AppScreen.Dashboard },
                             onCookieCaptured = { url, cookies ->
                                 viewModel.saveCookieForUrl(url, cookies)

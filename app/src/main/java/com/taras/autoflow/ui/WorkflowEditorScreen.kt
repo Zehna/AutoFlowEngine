@@ -401,6 +401,14 @@ fun WorkflowEditorScreen(
                     "SHIZUKU_SHELL", "SHELL" -> add("{{${prev.id}.output.stdout}}")
                     "GEMINI_AI" -> add("{{${prev.id}.output.reply}}")
                     "COMPUTE_KOTLIN", "COMPUTE" -> add("{{${prev.id}.output.value}}")
+                    "N8N_BRIDGE", "N8N" -> {
+                        add("{{${prev.id}.output.first_id}}")
+                        add("{{${prev.id}.output.id}}")
+                        add("{{${prev.id}.output.workflows_json}}")
+                        add("{{${prev.id}.output.pipeline_text}}")
+                        add("{{${prev.id}.output.execution_id}}")
+                        add("{{${prev.id}.output.output_json}}")
+                    }
                     else -> add("{{${prev.id}.output.result}}")
                 }
             }

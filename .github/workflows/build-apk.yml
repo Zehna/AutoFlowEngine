@@ -59,39 +59,39 @@ jobs:
       - name: Prepare & Inspect Release APKs
         run: |
           mkdir -p release_apks
-          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v2.0.0.apk
-          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v2.0.0.apk
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v2.1.0.apk
+          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v2.1.0.apk
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           echo "=== Permissions in Standard APK ==="
-          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.0.0.apk
+          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.1.0.apk
           echo "=== Providers & Manifest check in Standard APK ==="
-          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.0.0.apk --file AndroidManifest.xml | grep -iE "fileprovider|ShizukuProvider|SYSTEM_ALERT_WINDOW|accessibility|BIND_NOTIFICATION_LISTENER|debuggable"
+          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.1.0.apk --file AndroidManifest.xml | grep -iE "fileprovider|ShizukuProvider|SYSTEM_ALERT_WINDOW|accessibility|BIND_NOTIFICATION_LISTENER|debuggable"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AutoFlowEngine-v2.0.0-APKs
+          name: AutoFlowEngine-v2.1.0-APKs
           path: release_apks/*.apk
 
-      - name: Publish GitHub Release v2.0.0
+      - name: Publish GitHub Release v2.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v2.0.0 --yes || true
-          git tag -f v2.0.0
-          git push -f origin v2.0.0 || true
-          gh release create v2.0.0 \
-            release_apks/AutoFlowEngine-Standard-v2.0.0.apk \
-            release_apks/AutoFlowEngine-FullA11y-v2.0.0.apk \
-            --title "AutoFlow Engine v2.0.0 (Modular Workflow Automation Engine)" \
-            --notes "### AutoFlow Engine v2.0.0
+          gh release delete v2.1.0 --yes || true
+          git tag -f v2.1.0
+          git push -f origin v2.1.0 || true
+          gh release create v2.1.0 \
+            release_apks/AutoFlowEngine-Standard-v2.1.0.apk \
+            release_apks/AutoFlowEngine-FullA11y-v2.1.0.apk \
+            --title "AutoFlow Engine v2.1.0 (n8n Localhost Bridge & Inspector)" \
+            --notes "### AutoFlow Engine v2.1.0
 
-          Upgrade penuh menjadi **Modular Workflow Automation Engine**:
-          - **Modular JSON Schema & Orchestrator StateFlow**: Mendukung \`executionPolicy\` (\`ONCE\`/\`LOOP\`), linked \`nodes\` (\`next\`/\`END\`), kondisi percabangan, retry policy, dan resolusi path \`{{variables.key}}\` + \`{{node_id.output.field}}\`.
-          - **Pluggable Worker Registry**: \`SHIZUKU_SHELL\` (\`EXEC\`, \`LAUNCH_COMPONENT\`, \`FORCE_STOP\`, \`PUT_SETTING\`, \`TAP\`), \`WEBVIEW_HEADLESS\` (SPA selector polling + shared CookieManager), \`NETWORK_HTTP\`, \`COMPUTE_KOTLIN\` (Room KV \`DEDUPLICATE\` dengan TTL), \`GEMINI_AI\`, \`PYTHON_COMPUTE\` (\`RUN_INLINE\` & \`CALL_MODULE\`), dan \`DELAY\`.
-          - **Foreground Service & Floating STOP Bubble**: Notifikasi persisten dengan tombol kontrol **Pause**, **Resume**, **Stop**, serta \`FloatingControlOverlay\`.
-          - **Dashboard UI & Navigation Drawer (\`≡\`)**: Active Execution Telemetry Card, daftar Workflow Terpasang (\`filesDir/workflows/\`), import \`.json\`/\`.zip\` (Zip-Slip protection), type-aware Variable Configurator sheet, Live Execution Console auto-scroll, Session WebView Login, Dual-mode Workflow Editor, dan Output Vault CSV export.
+          Menambahkan integrasi penuh **n8n Localhost Auto-Start, Inspector & Executor**:
+          - **Auto-Start Server n8n**: Mendeteksi server n8n lokal (\`127.0.0.1:5678\`); jika belum hidup, otomatis menyalakan server via **Local Bridge (\`:15678\` / Omalauncher)**, **Shizuku Shell**, atau **Termux \`RUN_COMMAND\`**, lalu memantau \`/healthz\` + live boot log.
+          - **n8n Localhost Inspector**: Lihat daftar workflow di n8n lokal, toggle aktif/nonaktif, inspeksi seluruh node, trigger, koneksi pipeline, sticky notes, riwayat eksekusi per-node, raw JSON, hingga membuka Web UI n8n langsung di dalam aplikasi.
+          - **Worker \`N8N_BRIDGE\` (\`ENSURE_SERVER\`, \`LIST_WORKFLOWS\`, \`INSPECT_WORKFLOW\`, \`LIST_EXECUTIONS\`, \`EXECUTE_WORKFLOW\`)** & preset starter **\`n8n Localhost: Auto-Start & Inspeksi\`** di Dashboard, serta dukungan pin workflow n8n ke Dashboard untuk eksekusi 1-tap.
+          - **Cleartext Localhost Network Policy**: Mengizinkan HTTP lokal (\`127.0.0.1\` / \`localhost\` / LAN) untuk OkHttp & WebView.
 
           #### Varian APK:
-          1. **AutoFlowEngine-Standard-v2.0.0.apk** *(Direkomendasikan — bebas izin sensitif pemicu blokir Play Protect)*
-          2. **AutoFlowEngine-FullA11y-v2.0.0.apk** *(Varian lengkap dengan AccessibilityService & NotificationListener)*"
+          1. **AutoFlowEngine-Standard-v2.1.0.apk** *(Direkomendasikan — bebas izin sensitif pemicu blokir Play Protect)*
+          2. **AutoFlowEngine-FullA11y-v2.1.0.apk** *(Varian lengkap dengan AccessibilityService & NotificationListener)*"

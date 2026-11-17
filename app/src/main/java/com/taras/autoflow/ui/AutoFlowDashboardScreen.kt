@@ -32,6 +32,7 @@ fun AutoFlowDashboardScreen(
     viewModel: AutoFlowViewModel,
     snackbarHostState: SnackbarHostState,
     onOpenMenu: () -> Unit,
+    onOpenN8nInspector: () -> Unit,
     onCreateWorkflow: () -> Unit,
     onEditWorkflow: (WorkflowDefinition) -> Unit,
     onImportClick: () -> Unit
@@ -40,6 +41,9 @@ fun AutoFlowDashboardScreen(
     val orchState by viewModel.orchestratorState.collectAsStateWithLifecycle()
     val consoleLogs by viewModel.consoleLogs.collectAsStateWithLifecycle()
     val workflows by viewModel.workflows.collectAsStateWithLifecycle()
+    val n8nStatus by viewModel.n8nStatus.collectAsStateWithLifecycle()
+    val n8nWorkflows by viewModel.n8nWorkflows.collectAsStateWithLifecycle()
+    val n8nBusy by viewModel.n8nBusyMessage.collectAsStateWithLifecycle()
 
     val consoleListState = rememberLazyListState()
     LaunchedEffect(consoleLogs.size) {
@@ -80,6 +84,22 @@ fun AutoFlowDashboardScreen(
         ) {
             item {
                 SystemHealthCard()
+            }
+
+            item {
+                N8nDashboardQuickCard(
+                    n8nRunning = n8nStatus.n8nRunning,
+                    n8nBooting = n8nStatus.n8nBooting,
+                    bridgeAvailable = n8nStatus.bridgeAvailable,
+                    workflowCount = maxOf(n8nStatus.workflowCount, n8nWorkflows.size),
+                    busyMessage = n8nBusy,
+                    onRefresh = { viewModel.refreshN8nAll() },
+                    onStartOrOpen = {
+                        if (n8nStatus.n8nRunning) onOpenN8nInspector()
+                        else viewModel.startN8nServerAndRefresh { onOpenN8nInspector() }
+                    },
+                    onOpenInspector = onOpenN8nInspector
+                )
             }
 
             // a) Active Execution Telemetry Card (muncul saat Running / Paused)
@@ -576,4 +596,84 @@ private fun ScheduleDialog(
             }
         }
     )
+}
+
+@Composable
+private fun N8nDashboardQuickCard(
+    n8nRunning: Boolean,
+    n8nBooting: Boolean,
+    bridgeAvailable: Boolean,
+    workflowCount: Int,
+    busyMessage: String?,
+    onRefresh: () -> Unit,
+    onStartOrOpen: () -> Unit,
+    onOpenInspector: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (n8nRunning) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            n8nRunning -> "● n8n Localhost ONLINE (:5678)"
+                            n8nBooting -> "◐ n8n Sedang Booting..."
+                            else -> "n8n Localhost Bridge"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        busyMessage ?: "${if (bridgeAvailable) "Bridge :15678 siap" else "Bridge belum terdeteksi"} • $workflowCount workflow n8n",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Periksa n8n", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            if (busyMessage != null || n8nBooting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onOpenInspector,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.Hub, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Inspeksi n8n", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Button(
+                    onClick = onStartOrOpen,
+                    enabled = busyMessage == null,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (n8nRunning) "Buka n8n" else "Start & Hubungkan",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
 }

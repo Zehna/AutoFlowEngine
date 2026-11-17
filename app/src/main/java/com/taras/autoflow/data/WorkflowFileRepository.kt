@@ -25,8 +25,9 @@ class WorkflowFileRepository(private val context: Context) {
             ?.toList().orEmpty()
 
         if (existingFiles.isEmpty() && db.workflowDao().getWorkflowCount() == 0) {
-            val defaultWorkflow = BuiltInWorkflowSeeds.getStarterWorkflows().first()
-            saveWorkflow(defaultWorkflow)
+            BuiltInWorkflowSeeds.getStarterWorkflows().take(2).forEach { def ->
+                saveWorkflow(def)
+            }
         } else {
             // Sinkronkan setiap .json dari filesDir/workflows ke Room DB
             existingFiles.forEach { file ->
@@ -44,6 +45,18 @@ class WorkflowFileRepository(private val context: Context) {
                     )
                 }
             }
+        }
+
+        // Pastikan preset n8n Localhost otomatis hadir sekali saat upgrade ke v2.1.0
+        val prefs = context.getSharedPreferences("autoflow_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("n8n_starter_seeded_v21", false)) {
+            val n8nStarter = BuiltInWorkflowSeeds.getStarterWorkflows().firstOrNull {
+                it.id == "wf_n8n_localhost_autostart"
+            }
+            if (n8nStarter != null && db.workflowDao().getWorkflowById(n8nStarter.id) == null) {
+                saveWorkflow(n8nStarter)
+            }
+            prefs.edit().putBoolean("n8n_starter_seeded_v21", true).apply()
         }
     }
 
