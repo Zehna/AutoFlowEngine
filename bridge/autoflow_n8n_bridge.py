@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
 AutoFlow <-> n8n Localhost Control & Inspection Bridge.
-Runs inside Linux/proot (e.g. omalauncher or Termux) bound strictly to 127.0.0.1:15678
-so AutoFlow Engine Android APK can auto-start n8n, inspect local workflows & executions,
-and trigger workflow runs without root or shell permissions.
+Runs inside Linux/proot (e.g. omalauncher or Termux) bound strictly to loopback
+(127.0.0.1 and ::1 on port 15678) so AutoFlow Engine Android APK can auto-start
+n8n, inspect local workflows & executions, and trigger workflow runs.
 """
 
 import json
 import os
 import re
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -29,11 +31,23 @@ N8N_HOME = Path(os.environ.get("N8N_USER_FOLDER", str(Path.home()))) / ".n8n"
 N8N_DB_PATH = Path(os.environ.get("N8N_DB_PATH", str(N8N_HOME / "database.sqlite")))
 N8N_LOG_PATH = Path(os.environ.get("AUTOFLOW_N8N_LOG", "/root/n8n.log"))
 BRIDGE_LOG_PATH = Path(os.environ.get("AUTOFLOW_BRIDGE_LOG", "/tmp/autoflow-bridge.log"))
+BRIDGE_ACCESS_LOG_PATH = Path(os.environ.get("AUTOFLOW_BRIDGE_ACCESS_LOG", "/tmp/autoflow-bridge-access.log"))
 BRIDGE_PID_PATH = Path("/tmp/autoflow-bridge.pid")
+N8N_PID_PATH = Path("/tmp/autoflow-n8n.pid")
 N8N_BOOT_TS_PATH = Path("/tmp/autoflow-n8n-boot.ts")
 TOKEN_FILE_PATH = Path.home() / ".config" / "autoflow-bridge" / "token"
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_WF_COUNT_CACHE: Tuple[int, int] = (-1, 0)
+
+
+def append_access_log(line: str) -> None:
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(BRIDGE_ACCESS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {line}\n")
+    except OSError:
+        pass
 
 
 def get_expected_token() -> str:
@@ -48,11 +62,18 @@ def get_expected_token() -> str:
     return ""
 
 
-def probe_n8n_healthz(timeout: float = 1.2) -> Tuple[bool, int]:
+def probe_n8n_healthz(timeout: float = 0.4) -> Tuple[bool, int]:
+    # Fast TCP socket check first (~1ms when closed), then HTTP GET /healthz
+    try:
+        with socket.create_connection(("127.0.0.1", N8N_PORT), timeout=timeout):
+            pass
+    except OSError:
+        return False, 0
+
     url = f"http://127.0.0.1:{N8N_PORT}/healthz"
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=max(timeout, 1.0)) as resp:
             return resp.status == 200, resp.status
     except urllib.error.HTTPError as err:
         return False, err.code
@@ -60,7 +81,30 @@ def probe_n8n_healthz(timeout: float = 1.2) -> Tuple[bool, int]:
         return False, 0
 
 
-def find_n8n_pids() -> List[int]:
+def is_pid_n8n(pid: int) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+        return (
+            "n8n start" in cmd
+            or "/usr/bin/n8n start" in cmd
+            or "/usr/lib/node_modules/n8n/bin/n8n start" in cmd
+        )
+    except OSError:
+        return False
+
+
+def find_n8n_pids(fast: bool = False) -> List[int]:
+    if fast and N8N_PID_PATH.is_file():
+        try:
+            pid = int(N8N_PID_PATH.read_text(encoding="utf-8").strip())
+            if is_pid_n8n(pid):
+                return [pid]
+        except Exception:
+            pass
+    if fast and not N8N_BOOT_TS_PATH.is_file():
+        return []
+
     pids: List[int] = []
     proc_dir = Path("/proc")
     if not proc_dir.is_dir():
@@ -72,19 +116,8 @@ def find_n8n_pids() -> List[int]:
         pid = int(entry.name)
         if pid == my_pid:
             continue
-        try:
-            raw = (entry / "cmdline").read_bytes()
-            cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
-            if not cmd:
-                continue
-            if (
-                "n8n start" in cmd
-                or "/usr/bin/n8n start" in cmd
-                or "/usr/lib/node_modules/n8n/bin/n8n start" in cmd
-            ):
-                pids.append(pid)
-        except OSError:
-            continue
+        if is_pid_n8n(pid):
+            pids.append(pid)
     return pids
 
 
@@ -113,8 +146,10 @@ def build_n8n_env() -> Dict[str, str]:
 
 def start_n8n_background() -> Dict[str, Any]:
     up, _ = probe_n8n_healthz()
-    pids = find_n8n_pids()
+    pids = find_n8n_pids(fast=False)
     if up:
+        if pids:
+            N8N_PID_PATH.write_text(str(pids[0]), encoding="utf-8")
         return {
             "status": "running",
             "alreadyRunning": True,
@@ -122,6 +157,7 @@ def start_n8n_background() -> Dict[str, Any]:
             "n8nUrl": f"http://127.0.0.1:{N8N_PORT}",
         }
     if pids:
+        N8N_PID_PATH.write_text(str(pids[0]), encoding="utf-8")
         return {
             "status": "starting",
             "alreadyStarting": True,
@@ -143,6 +179,7 @@ def start_n8n_background() -> Dict[str, Any]:
         close_fds=True,
     )
     log_f.close()
+    N8N_PID_PATH.write_text(str(proc.pid), encoding="utf-8")
     return {
         "status": "starting",
         "alreadyRunning": False,
@@ -153,16 +190,16 @@ def start_n8n_background() -> Dict[str, Any]:
 
 
 def stop_n8n_processes() -> Dict[str, Any]:
-    pids = find_n8n_pids()
+    pids = find_n8n_pids(fast=False)
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
     deadline = time.time() + 4.0
-    while time.time() < deadline and find_n8n_pids():
+    while time.time() < deadline and find_n8n_pids(fast=False):
         time.sleep(0.25)
-    remaining = find_n8n_pids()
+    remaining = find_n8n_pids(fast=False)
     for pid in remaining:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -170,6 +207,7 @@ def stop_n8n_processes() -> Dict[str, Any]:
             pass
     try:
         N8N_BOOT_TS_PATH.unlink(missing_ok=True)
+        N8N_PID_PATH.unlink(missing_ok=True)
     except OSError:
         pass
     return {"status": "stopped", "stoppedPids": pids}
@@ -583,27 +621,37 @@ def read_n8n_log_tail(lines: int = 50) -> Dict[str, Any]:
 
 def build_health_payload() -> Dict[str, Any]:
     up, code = probe_n8n_healthz()
-    pids = find_n8n_pids()
+    pids = find_n8n_pids(fast=True)
+    if up and not pids:
+        pids = find_n8n_pids(fast=False)
+        if pids:
+            N8N_PID_PATH.write_text(str(pids[0]), encoding="utf-8")
     booting = (not up) and len(pids) > 0
     if up:
         try:
             N8N_BOOT_TS_PATH.unlink(missing_ok=True)
         except OSError:
             pass
+    global _WF_COUNT_CACHE
     wf_count = 0
     if N8N_DB_PATH.is_file():
         try:
-            conn = open_readonly_db()
-            if conn:
-                wf_count = conn.execute(
-                    "SELECT COUNT(*) FROM workflow_entity WHERE COALESCE(isArchived, 0) = 0"
-                ).fetchone()[0]
-                conn.close()
+            mtime_ns = N8N_DB_PATH.stat().st_mtime_ns
+            if _WF_COUNT_CACHE[0] == mtime_ns:
+                wf_count = _WF_COUNT_CACHE[1]
+            else:
+                conn = open_readonly_db()
+                if conn:
+                    wf_count = conn.execute(
+                        "SELECT COUNT(*) FROM workflow_entity WHERE COALESCE(isArchived, 0) = 0"
+                    ).fetchone()[0]
+                    conn.close()
+                    _WF_COUNT_CACHE = (mtime_ns, wf_count)
         except Exception:
             pass
     return {
         "bridge": "ok",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "port": BRIDGE_PORT,
         "n8nPort": N8N_PORT,
         "n8nUrl": f"http://127.0.0.1:{N8N_PORT}",
@@ -624,16 +672,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _send_json(self, status: int, payload: Any) -> None:
+    def _send_json(self, status: int, payload: Any, started_at: float = 0.0) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            self.close_connection = True
+        finally:
+            if started_at > 0:
+                ms = int((time.time() - started_at) * 1000)
+                ua = self.headers.get("User-Agent", "-")
+                append_access_log(f"{self.client_address[0]}:{self.client_address[1]} {self.command} {self.path} -> {status} ({ms}ms) ua={ua}")
 
-    def _check_auth(self) -> bool:
+    def _check_auth(self, started_at: float) -> bool:
         expected = get_expected_token()
         if not expected:
             return True
@@ -643,57 +702,58 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if auth.lower().startswith("bearer "):
                 provided = auth[7:].strip()
         if provided != expected:
-            self._send_json(401, {"error": "Unauthorized: invalid or missing X-Bridge-Token"})
+            self._send_json(401, {"error": "Unauthorized: invalid or missing X-Bridge-Token"}, started_at)
             return False
         return True
 
     def do_GET(self) -> None:
+        t0 = time.time()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         qs = urllib.parse.parse_qs(parsed.query)
 
         if path == "/health":
-            self._send_json(200, build_health_payload())
+            self._send_json(200, build_health_payload(), t0)
             return
 
-        if not self._check_auth():
+        if not self._check_auth(t0):
             return
 
         if path == "/n8n/logs":
             lines = int((qs.get("lines") or ["50"])[0])
-            self._send_json(200, read_n8n_log_tail(lines))
+            self._send_json(200, read_n8n_log_tail(lines), t0)
         elif path == "/n8n/inspect/workflows":
             items = inspect_workflows_summary()
-            self._send_json(200, {"data": items, "count": len(items)})
+            self._send_json(200, {"data": items, "count": len(items)}, t0)
         elif path.startswith("/n8n/inspect/workflows/"):
             wf_id = path[len("/n8n/inspect/workflows/"):]
             detail = inspect_workflow_detail(wf_id)
             if detail is None:
-                self._send_json(404, {"error": f"Workflow '{wf_id}' not found"})
+                self._send_json(404, {"error": f"Workflow '{wf_id}' not found"}, t0)
             else:
-                self._send_json(200, detail)
+                self._send_json(200, detail, t0)
         elif path == "/n8n/inspect/executions":
             wf_id = (qs.get("workflowId") or [None])[0]
             limit = int((qs.get("limit") or ["20"])[0])
             items = inspect_executions(workflow_id=wf_id, limit=limit)
-            self._send_json(200, {"data": items, "count": len(items)})
+            self._send_json(200, {"data": items, "count": len(items)}, t0)
         elif path.startswith("/n8n/inspect/executions/"):
             ex_id = path[len("/n8n/inspect/executions/"):]
             detail = inspect_execution_detail(ex_id)
             if detail is None:
-                self._send_json(404, {"error": f"Execution '{ex_id}' not found"})
+                self._send_json(404, {"error": f"Execution '{ex_id}' not found"}, t0)
             else:
-                self._send_json(200, detail)
+                self._send_json(200, detail, t0)
         else:
-            self._send_json(404, {"error": f"Unknown endpoint: {path}"})
+            self._send_json(404, {"error": f"Unknown endpoint: {path}"}, t0)
 
     def do_POST(self) -> None:
+        t0 = time.time()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
-        if not self._check_auth():
+        if not self._check_auth(t0):
             return
 
-        # Drain request body safely up to 64 KB
         length = int(self.headers.get("Content-Length", "0") or "0")
         if 0 < length <= 65536:
             self.rfile.read(length)
@@ -701,20 +761,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if path == "/n8n/start":
             res = start_n8n_background()
             code = 200 if res.get("status") == "running" else 202
-            self._send_json(code, res)
+            self._send_json(code, res, t0)
         elif path == "/n8n/stop":
-            self._send_json(200, stop_n8n_processes())
+            self._send_json(200, stop_n8n_processes(), t0)
         elif path.startswith("/n8n/workflows/") and path.endswith("/execute"):
             wf_id = path[len("/n8n/workflows/"):-len("/execute")]
             code, res = execute_workflow_cli(wf_id)
-            self._send_json(code, res)
+            self._send_json(code, res, t0)
         else:
-            self._send_json(404, {"error": f"Unknown endpoint: {path}"})
+            self._send_json(404, {"error": f"Unknown endpoint: {path}"}, t0)
+
+
+class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
 
 
 def is_bridge_alive() -> bool:
     try:
-        with urllib.request.urlopen(f"http://{BRIDGE_HOST}:{BRIDGE_PORT}/health", timeout=0.8) as r:
+        with urllib.request.urlopen(f"http://{BRIDGE_HOST}:{BRIDGE_PORT}/health", timeout=2.5) as r:
             return r.status == 200
     except Exception:
         return False
@@ -733,7 +797,7 @@ def ensure_daemon() -> Dict[str, Any]:
             close_fds=True,
         )
         log_f.close()
-        for _ in range(15):
+        for _ in range(25):
             if is_bridge_alive():
                 break
             time.sleep(0.1)
@@ -745,13 +809,25 @@ def ensure_daemon() -> Dict[str, Any]:
 def serve_forever() -> None:
     BRIDGE_PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     ThreadingHTTPServer.allow_reuse_address = True
-    server = ThreadingHTTPServer((BRIDGE_HOST, BRIDGE_PORT), BridgeHandler)
+    server_v4 = ThreadingHTTPServer((BRIDGE_HOST, BRIDGE_PORT), BridgeHandler)
+
+    server_v6 = None
     try:
-        server.serve_forever()
+        IPv6ThreadingHTTPServer.allow_reuse_address = True
+        server_v6 = IPv6ThreadingHTTPServer(("::1", BRIDGE_PORT), BridgeHandler)
+        t6 = threading.Thread(target=server_v6.serve_forever, daemon=True)
+        t6.start()
+    except OSError:
+        server_v6 = None
+
+    try:
+        server_v4.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        server_v4.server_close()
+        if server_v6:
+            server_v6.server_close()
 
 
 def main() -> None:

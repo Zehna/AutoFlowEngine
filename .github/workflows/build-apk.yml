@@ -59,39 +59,35 @@ jobs:
       - name: Prepare & Inspect Release APKs
         run: |
           mkdir -p release_apks
-          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v2.1.0.apk
-          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v2.1.0.apk
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk release_apks/AutoFlowEngine-Standard-v2.1.1.apk
+          cp app/build/outputs/apk/full/release/app-full-release.apk release_apks/AutoFlowEngine-FullA11y-v2.1.1.apk
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           echo "=== Permissions in Standard APK ==="
-          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.1.0.apk
+          "$AAPT2" dump permissions release_apks/AutoFlowEngine-Standard-v2.1.1.apk
           echo "=== Providers & Manifest check in Standard APK ==="
-          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.1.0.apk --file AndroidManifest.xml | grep -iE "fileprovider|ShizukuProvider|SYSTEM_ALERT_WINDOW|accessibility|BIND_NOTIFICATION_LISTENER|debuggable"
+          "$AAPT2" dump xmltree release_apks/AutoFlowEngine-Standard-v2.1.1.apk --file AndroidManifest.xml | grep -iE "fileprovider|ShizukuProvider|SYSTEM_ALERT_WINDOW|accessibility|BIND_NOTIFICATION_LISTENER|debuggable"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AutoFlowEngine-v2.1.0-APKs
+          name: AutoFlowEngine-v2.1.1-APKs
           path: release_apks/*.apk
 
-      - name: Publish GitHub Release v2.1.0
+      - name: Publish GitHub Release v2.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v2.1.0 --yes || true
-          git tag -f v2.1.0
-          git push -f origin v2.1.0 || true
-          gh release create v2.1.0 \
-            release_apks/AutoFlowEngine-Standard-v2.1.0.apk \
-            release_apks/AutoFlowEngine-FullA11y-v2.1.0.apk \
-            --title "AutoFlow Engine v2.1.0 (n8n Localhost Bridge & Inspector)" \
-            --notes "### AutoFlow Engine v2.1.0
+          gh release delete v2.1.1 --yes || true
+          git tag -f v2.1.1
+          git push -f origin v2.1.1 || true
+          gh release create v2.1.1 \
+            release_apks/AutoFlowEngine-Standard-v2.1.1.apk \
+            release_apks/AutoFlowEngine-FullA11y-v2.1.1.apk \
+            --title "AutoFlow Engine v2.1.1 (n8n Bridge Diagnostics & Reliability Fix)" \
+            --notes "### AutoFlow Engine v2.1.1
 
-          Menambahkan integrasi penuh **n8n Localhost Auto-Start, Inspector & Executor**:
-          - **Auto-Start Server n8n**: Mendeteksi server n8n lokal (\`127.0.0.1:5678\`); jika belum hidup, otomatis menyalakan server via **Local Bridge (\`:15678\` / Omalauncher)**, **Shizuku Shell**, atau **Termux \`RUN_COMMAND\`**, lalu memantau \`/healthz\` + live boot log.
-          - **n8n Localhost Inspector**: Lihat daftar workflow di n8n lokal, toggle aktif/nonaktif, inspeksi seluruh node, trigger, koneksi pipeline, sticky notes, riwayat eksekusi per-node, raw JSON, hingga membuka Web UI n8n langsung di dalam aplikasi.
-          - **Worker \`N8N_BRIDGE\` (\`ENSURE_SERVER\`, \`LIST_WORKFLOWS\`, \`INSPECT_WORKFLOW\`, \`LIST_EXECUTIONS\`, \`EXECUTE_WORKFLOW\`)** & preset starter **\`n8n Localhost: Auto-Start & Inspeksi\`** di Dashboard, serta dukungan pin workflow n8n ke Dashboard untuk eksekusi 1-tap.
-          - **Cleartext Localhost Network Policy**: Mengizinkan HTTP lokal (\`127.0.0.1\` / \`localhost\` / LAN) untuk OkHttp & WebView.
-
-          #### Varian APK:
-          1. **AutoFlowEngine-Standard-v2.1.0.apk** *(Direkomendasikan — bebas izin sensitif pemicu blokir Play Protect)*
-          2. **AutoFlowEngine-FullA11y-v2.1.0.apk** *(Varian lengkap dengan AccessibilityService & NotificationListener)*"
+          Perbaikan koneksi & diagnostik **n8n Localhost Bridge**:
+          - Memperpanjang timeout probe OkHttp (\`2s → 6s\` connect, \`5s → 12s\` read) agar koneksi ke proot/Omalauncher tetap stabil saat cold-wake.
+          - Menambahkan auto-fallback alias loopback (\`127.0.0.1\` / \`localhost\` / \`[::1]\`) untuk bridge (\`:15678\`) & n8n (\`:5678\`).
+          - Menambahkan \`SnackbarHost\` pada layar **n8n Localhost**, menampilkan detail error bridge secara eksplisit, dan tombol **Uji Koneksi Localhost**.
+          - Menambahkan \`ACCESS_LOCAL_NETWORK\` untuk kompatibilitas Android 17+."

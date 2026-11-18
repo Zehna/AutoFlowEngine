@@ -76,6 +76,9 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
     private val _n8nLastOutcome = MutableStateFlow<String?>(null)
     val n8nLastOutcome = _n8nLastOutcome.asStateFlow()
 
+    private val _n8nDiagnostics = MutableStateFlow<String?>(null)
+    val n8nDiagnostics = _n8nDiagnostics.asStateFlow()
+
     val workflows = db.workflowDao().observeAllWorkflows().stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
@@ -352,7 +355,9 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
                 onFailure = { err ->
                     _n8nBusyMessage.value = null
                     refreshN8nStatusInternal(cfg)
-                    _events.tryEmit("n8n gagal start: ${err.message}")
+                    val msg = "n8n gagal start: ${err.message}"
+                    _n8nLastOutcome.value = msg
+                    _events.tryEmit(msg)
                 }
             )
         }
@@ -533,5 +538,20 @@ class AutoFlowViewModel(application: Application) : AndroidViewModel(application
 
     fun clearN8nOutcome() {
         _n8nLastOutcome.value = null
+    }
+
+    fun runN8nDiagnostics() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cfg = n8nStore.loadConfig()
+            _n8nBusyMessage.value = "Menguji koneksi localhost (:5678 & :15678)..."
+            val report = n8nClient.runConnectionDiagnostics(cfg)
+            _n8nDiagnostics.value = report
+            refreshN8nStatusInternal(cfg)
+            _n8nBusyMessage.value = null
+        }
+    }
+
+    fun clearN8nDiagnostics() {
+        _n8nDiagnostics.value = null
     }
 }

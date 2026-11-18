@@ -43,6 +43,7 @@ data class N8nServerStatus(
     val workflowCount: Int = 0,
     val bridgeVersion: String = "",
     val message: String = "Belum diperiksa",
+    val bridgeError: String? = null,
     val logTail: List<String> = emptyList()
 )
 

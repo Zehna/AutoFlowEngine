@@ -24,8 +24,9 @@ class N8nClient(private val context: Context) {
     private val configStore = N8nConfigStore(appContext)
 
     private val shortClient = OkHttpClient.Builder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
     private val apiClient = OkHttpClient.Builder()
@@ -45,7 +46,7 @@ class N8nClient(private val context: Context) {
         val bridgeUrl = config.normalizedBridgeUrl()
 
         val directUp = isHealthzUp(baseUrl)
-        val bridgeJson = fetchBridgeHealth(bridgeUrl, config.bridgeToken)
+        val (bridgeJson, resolvedBridge, bridgeErr) = fetchBridgeHealthDetailed(bridgeUrl, config.bridgeToken)
 
         if (bridgeJson != null) {
             val running = directUp || bridgeJson.optBoolean("n8nRunning", false)
@@ -55,9 +56,9 @@ class N8nClient(private val context: Context) {
             val wfCount = bridgeJson.optInt("workflowCount", 0)
             val logs = if (booting) fetchBridgeLogs(config, 8) else emptyList()
             val msg = when {
-                running -> "Server n8n aktif di $baseUrl (Bridge terhubung)"
+                running -> "Server n8n aktif di $baseUrl (Bridge: $resolvedBridge)"
                 booting -> "Server n8n sedang startup (${elapsed}s)..."
-                else -> "Bridge aktif (:15678), n8n standby — siap auto-start"
+                else -> "Bridge aktif ($resolvedBridge), n8n standby — siap auto-start"
             }
             return@withContext N8nServerStatus(
                 n8nRunning = running,
@@ -68,6 +69,7 @@ class N8nClient(private val context: Context) {
                 workflowCount = wfCount,
                 bridgeVersion = bridgeJson.optString("version", "1.0.0"),
                 message = msg,
+                bridgeError = null,
                 logTail = logs
             )
         }
@@ -75,14 +77,46 @@ class N8nClient(private val context: Context) {
         val msg = if (directUp) {
             "Server n8n aktif di $baseUrl (Koneksi langsung)"
         } else {
-            "Server n8n offline di $baseUrl • Bridge lokal belum terdeteksi"
+            "n8n offline • Bridge gagal: ${bridgeErr ?: "tidak terdeteksi"}"
         }
         N8nServerStatus(
             n8nRunning = directUp,
             n8nBooting = false,
             bridgeAvailable = false,
-            message = msg
+            message = msg,
+            bridgeError = bridgeErr
         )
+    }
+
+    suspend fun runConnectionDiagnostics(config: N8nConfig): String = withContext(Dispatchers.IO) {
+        val lines = mutableListOf<String>()
+        val urls = (listOf(
+            "n8n (:5678)" to "${config.normalizedBaseUrl()}/healthz",
+            "n8n (localhost)" to "http://localhost:5678/healthz"
+        ) + bridgeCandidates(config.normalizedBridgeUrl()).map { b ->
+            "Bridge ($b)" to "$b/health"
+        }).distinctBy { it.second }
+
+        for ((label, url) in urls) {
+            val t0 = System.currentTimeMillis()
+            val reqBuilder = Request.Builder().url(url).get()
+            if (url.contains(":15678") && config.bridgeToken.isNotBlank()) {
+                reqBuilder.header("X-Bridge-Token", config.bridgeToken)
+            }
+            val resultStr = try {
+                shortClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    val ms = System.currentTimeMillis() - t0
+                    "HTTP ${resp.code} (${ms}ms)"
+                }
+            } catch (e: Exception) {
+                val ms = System.currentTimeMillis() - t0
+                "${e.javaClass.simpleName}: ${e.message} (${ms}ms)"
+            }
+            lines.add("• $label: $resultStr")
+        }
+        lines.add("• Shizuku izin: ${if (ShizukuHelper.hasPermission()) "YA" else "TIDAK"}")
+        lines.add("• Termux terpasang: ${if (isPackageInstalled("com.termux")) "YA" else "TIDAK"}")
+        lines.joinToString("\n")
     }
 
     suspend fun ensureServerRunning(
@@ -101,10 +135,12 @@ class N8nClient(private val context: Context) {
             )
         }
 
-        val startedVia = triggerAutoStart(config, onProgress)
+        val bridgeStartAttempt = triggerAutoStart(config, onProgress)
+        val startedVia = bridgeStartAttempt.first
             ?: return@withContext Result.failure(
                 IllegalStateException(
-                    "n8n offline & tidak ada auto-starter aktif. Pasang Bridge lokal (:15678), aktifkan Shizuku, atau jalankan 'n8n start' di terminal."
+                    "Auto-start gagal (${bridgeStartAttempt.second ?: "tidak ada auto-starter aktif"}). " +
+                        "Pastikan widget n8n-bridge aktif di Omalauncher atau jalankan autoflow-n8n-bridge."
                 )
             )
 
@@ -165,21 +201,25 @@ class N8nClient(private val context: Context) {
     private suspend fun triggerAutoStart(
         config: N8nConfig,
         onProgress: (String) -> Unit
-    ): String? {
+    ): Pair<String?, String?> {
         val mode = config.autoStartMode
+        var lastError: String? = null
 
         if (mode == N8nAutoStartMode.AUTO || mode == N8nAutoStartMode.BRIDGE) {
             val bridgeUrl = config.normalizedBridgeUrl()
-            if (fetchBridgeHealth(bridgeUrl, config.bridgeToken) != null) {
-                val resp = postBridge(bridgeUrl, "/n8n/start", config.bridgeToken)
+            val (healthJson, workingBridge, bridgeErr) = fetchBridgeHealthDetailed(bridgeUrl, config.bridgeToken)
+            if (healthJson != null && workingBridge != null) {
+                val resp = postBridge(workingBridge, "/n8n/start", config.bridgeToken)
                 if (resp.first in 200..299) {
-                    return "Local Bridge (:15678)"
-                } else if (mode == N8nAutoStartMode.BRIDGE) {
-                    onProgress("Bridge menolak /n8n/start (HTTP ${resp.first}): ${resp.second}")
-                    return null
+                    return "Local Bridge ($workingBridge)" to null
+                } else {
+                    lastError = "Bridge $workingBridge menolak /n8n/start (HTTP ${resp.first}): ${resp.second}"
+                    onProgress(lastError)
+                    if (mode == N8nAutoStartMode.BRIDGE) return null to lastError
                 }
-            } else if (mode == N8nAutoStartMode.BRIDGE) {
-                return null
+            } else {
+                lastError = "Bridge :15678 tidak terjangkau ($bridgeErr)"
+                if (mode == N8nAutoStartMode.BRIDGE) return null to lastError
             }
         }
 
@@ -188,21 +228,24 @@ class N8nClient(private val context: Context) {
             if (ShizukuHelper.hasPermission() && cmd.isNotEmpty()) {
                 val shellRes = ShizukuHelper.runShell("nohup $cmd >/dev/null 2>&1 &")
                 if (shellRes.isSuccess) {
-                    return "Shizuku Shell"
+                    return "Shizuku Shell" to null
+                } else {
+                    lastError = "Shizuku gagal: ${shellRes.exceptionOrNull()?.message}"
                 }
             } else if (mode == N8nAutoStartMode.SHIZUKU) {
-                return null
+                return null to "Izin Shizuku belum aktif atau perintah start kosong"
             }
         }
 
         if (mode == N8nAutoStartMode.AUTO || mode == N8nAutoStartMode.TERMUX) {
             if (isPackageInstalled("com.termux")) {
                 val ok = launchTermuxCommand(config.termuxCommand)
-                if (ok) return "Termux RUN_COMMAND"
+                if (ok) return "Termux RUN_COMMAND" to null
+                lastError = "Gagal mengirim RUN_COMMAND ke Termux"
             }
         }
 
-        return null
+        return null to (lastError ?: "Tidak ada metode auto-start yang tersedia")
     }
 
     suspend fun stopServer(config: N8nConfig): Result<String> = withContext(Dispatchers.IO) {
@@ -605,44 +648,95 @@ class N8nClient(private val context: Context) {
         }
     }
 
-    private fun isHealthzUp(baseUrl: String): Boolean {
-        val req = Request.Builder().url("$baseUrl/healthz").get().build()
-        return runCatching {
-            shortClient.newCall(req).execute().use { it.isSuccessful }
-        }.getOrDefault(false)
+    private fun bridgeCandidates(primary: String): List<String> {
+        val list = mutableListOf(primary)
+        when {
+            primary.contains("127.0.0.1") -> {
+                list.add(primary.replace("127.0.0.1", "localhost"))
+                list.add(primary.replace("127.0.0.1", "[::1]"))
+            }
+            primary.contains("localhost") -> {
+                list.add(primary.replace("localhost", "127.0.0.1"))
+                list.add(primary.replace("localhost", "[::1]"))
+            }
+        }
+        return list.distinct()
     }
 
-    private fun fetchBridgeHealth(bridgeUrl: String, token: String): JSONObject? {
-        val reqBuilder = Request.Builder().url("$bridgeUrl/health").get()
-        if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
-        return runCatching {
-            shortClient.newCall(reqBuilder.build()).execute().use { resp ->
-                if (!resp.isSuccessful) return@use null
-                JSONObject(resp.body?.string().orEmpty())
-            }
-        }.getOrNull()
+    private fun isHealthzUp(baseUrl: String): Boolean {
+        for (candidate in bridgeCandidates(baseUrl)) {
+            val req = Request.Builder().url("$candidate/healthz").get().build()
+            val ok = runCatching {
+                shortClient.newCall(req).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+            if (ok) return true
+        }
+        return false
     }
+
+    private fun fetchBridgeHealthDetailed(
+        bridgeUrl: String,
+        token: String
+    ): Triple<JSONObject?, String?, String?> {
+        val errors = mutableListOf<String>()
+        for (candidate in bridgeCandidates(bridgeUrl)) {
+            val reqBuilder = Request.Builder().url("$candidate/health").get()
+            if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
+            try {
+                shortClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val json = JSONObject(resp.body?.string().orEmpty())
+                        return Triple(json, candidate, null)
+                    } else {
+                        errors.add("$candidate -> HTTP ${resp.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                errors.add("$candidate -> ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+        return Triple(null, null, errors.joinToString(" | "))
+    }
+
+    private fun fetchBridgeHealth(bridgeUrl: String, token: String): JSONObject? =
+        fetchBridgeHealthDetailed(bridgeUrl, token).first
 
     private fun getBridge(bridgeUrl: String, path: String, token: String): Pair<Int, String> {
-        val reqBuilder = Request.Builder().url("$bridgeUrl$path").get()
-        if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
-        return runCatching {
-            apiClient.newCall(reqBuilder.build()).execute().use { resp ->
-                resp.code to (resp.body?.string().orEmpty())
+        var lastFail = -1 to "Connection failed"
+        for (candidate in bridgeCandidates(bridgeUrl)) {
+            val reqBuilder = Request.Builder().url("$candidate$path").get()
+            if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
+            val attempt = try {
+                apiClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    resp.code to (resp.body?.string().orEmpty())
+                }
+            } catch (e: Exception) {
+                -1 to "${e.javaClass.simpleName}: ${e.message}"
             }
-        }.getOrElse { -1 to (it.message ?: "Connection failed") }
+            if (attempt.first > 0) return attempt
+            lastFail = attempt
+        }
+        return lastFail
     }
 
     private fun postBridge(bridgeUrl: String, path: String, token: String): Pair<Int, String> {
-        val reqBuilder = Request.Builder()
-            .url("$bridgeUrl$path")
-            .post("{}".toRequestBody(jsonMediaType))
-        if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
-        return runCatching {
-            apiClient.newCall(reqBuilder.build()).execute().use { resp ->
-                resp.code to (resp.body?.string().orEmpty())
+        var lastFail = -1 to "Connection failed"
+        for (candidate in bridgeCandidates(bridgeUrl)) {
+            val reqBuilder = Request.Builder()
+                .url("$candidate$path")
+                .post("{}".toRequestBody(jsonMediaType))
+            if (token.isNotBlank()) reqBuilder.header("X-Bridge-Token", token)
+            val attempt = try {
+                apiClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    resp.code to (resp.body?.string().orEmpty())
+                }
+            } catch (e: Exception) {
+                -1 to "${e.javaClass.simpleName}: ${e.message}"
             }
-        }.getOrElse { -1 to (it.message ?: "Connection failed") }
+            if (attempt.first > 0) return attempt
+            lastFail = attempt
+        }
+        return lastFail
     }
 
     private fun requestN8n(

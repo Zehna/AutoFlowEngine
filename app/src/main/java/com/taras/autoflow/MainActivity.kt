@@ -181,6 +181,7 @@ class MainActivity : ComponentActivity() {
                         )
                         AppScreen.N8nInspector -> N8nInspectorScreen(
                             viewModel = viewModel,
+                            snackbarHostState = snackbarHostState,
                             onBack = { currentScreen = AppScreen.Dashboard },
                             onOpenWebUi = { url ->
                                 webLoginInitialUrl = url

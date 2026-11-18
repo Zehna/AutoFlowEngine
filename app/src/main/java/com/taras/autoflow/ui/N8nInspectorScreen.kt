@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -21,6 +22,7 @@ import com.taras.autoflow.n8n.N8nWorkflowSummary
 @Composable
 fun N8nInspectorScreen(
     viewModel: AutoFlowViewModel,
+    snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onOpenWebUi: (url: String) -> Unit
 ) {
@@ -32,6 +34,7 @@ fun N8nInspectorScreen(
     val selectedExec by viewModel.n8nSelectedExec.collectAsStateWithLifecycle()
     val busyMessage by viewModel.n8nBusyMessage.collectAsStateWithLifecycle()
     val lastOutcome by viewModel.n8nLastOutcome.collectAsStateWithLifecycle()
+    val diagnostics by viewModel.n8nDiagnostics.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
@@ -51,6 +54,7 @@ fun N8nInspectorScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("n8n Localhost", fontWeight = FontWeight.Bold) },
@@ -82,6 +86,7 @@ fun N8nInspectorScreen(
                 N8nServerControlCard(
                     baseUrl = config.normalizedBaseUrl(),
                     statusMessage = status.message,
+                    bridgeError = status.bridgeError,
                     n8nRunning = status.n8nRunning,
                     n8nBooting = status.n8nBooting,
                     bridgeAvailable = status.bridgeAvailable,
@@ -97,8 +102,38 @@ fun N8nInspectorScreen(
                             viewModel.startN8nServerAndRefresh { onOpenWebUi(url) }
                         }
                     },
+                    onRunDiagnostics = { viewModel.runN8nDiagnostics() },
                     onOpenConfig = { showConfigSheet = true }
                 )
+            }
+
+            if (diagnostics != null) {
+                item {
+                    Surface(
+                        color = Color(0xFF101317),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Diagnostik Koneksi Localhost", color = Color(0xFFA5D6A7), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                TextButton(onClick = { viewModel.clearN8nDiagnostics() }) {
+                                    Text("Tutup", color = Color(0xFF90CAF9))
+                                }
+                            }
+                            Text(
+                                diagnostics!!,
+                                color = Color(0xFFE0E0E0),
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
             }
 
             if (lastOutcome != null) {
@@ -295,6 +330,7 @@ fun N8nInspectorScreen(
 private fun N8nServerControlCard(
     baseUrl: String,
     statusMessage: String,
+    bridgeError: String?,
     n8nRunning: Boolean,
     n8nBooting: Boolean,
     bridgeAvailable: Boolean,
@@ -303,6 +339,7 @@ private fun N8nServerControlCard(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenWeb: () -> Unit,
+    onRunDiagnostics: () -> Unit,
     onOpenConfig: () -> Unit
 ) {
     val containerColor = when {
@@ -348,6 +385,15 @@ private fun N8nServerControlCard(
 
             Text(busyMessage ?: statusMessage, style = MaterialTheme.typography.bodySmall)
 
+            if (!bridgeError.isNullOrBlank() && !bridgeAvailable) {
+                Text(
+                    "Detail error bridge: $bridgeError",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
             if (busyMessage != null || n8nBooting) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
@@ -387,6 +433,16 @@ private fun N8nServerControlCard(
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Buka Web UI")
                 }
+            }
+
+            OutlinedButton(
+                onClick = onRunDiagnostics,
+                enabled = busyMessage == null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.NetworkCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Uji Koneksi Localhost (:5678 & :15678)")
             }
         }
     }
